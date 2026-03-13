@@ -20,7 +20,6 @@ export default function ProfilePage() {
   const [user, setUser] = useState<UserInfo | null>(getStoredUser());
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
@@ -70,7 +69,6 @@ export default function ProfilePage() {
     try {
       await updateUser(user.id, { password: newPassword });
       setSuccess('Password changed successfully.');
-      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (e: any) {

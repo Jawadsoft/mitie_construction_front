@@ -5,7 +5,7 @@ import { exportCSV, exportPDF } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
-import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../components/DetailDrawer';
+import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
 import { getAuthHeaders } from '../api/client';
 
 type Tab = 'contractors' | 'attendance' | 'payments' | 'wages' | 'advances';

@@ -5,7 +5,7 @@ import {
   getSales, getSale, createSale, deleteSale, getInstallments, recordPayment
 } from '../api/sales';
 import type { Customer, PropertyUnit, Sale, SaleInstallment } from '../api/sales';
-import { exportCSV, exportPDF } from '../utils/exportUtils';
+import { exportCSV } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
