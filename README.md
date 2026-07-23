@@ -248,19 +248,33 @@ Profit = Revenue from Sale
 
 ## Deployment
 
-Configured for Render via `render.yaml`:
+Configured for Render via [`render.yaml`](render.yaml):
 
-```yaml
-services:
-  - type: web
-    name: construction-erp-api
-    runtime: node
-    rootDir: backend/server
-    buildCommand: npm install && npm run build
-    startCommand: npm run start:prod
+| Service | Type | Root | Notes |
+|---------|------|------|--------|
+| `construction-erp-api` | Web (Node) | `backend/server` | Nest API |
+| `construction-erp-web` | Static | `frontend` | Vite build → `dist` |
+
+### API (`construction-erp-api`)
+
+In the Render dashboard, set:
+
+- **`DATABASE_URL`** — Internal Database URL from your Render Postgres (required; enables SSL in Nest)
+- **`NODE_ENV=production`** (Blueprint sets this)
+
+Start command uses `PORT` from Render and binds `0.0.0.0`.
+
+### Frontend (`construction-erp-web`)
+
+Vite bakes env at **build** time. In the static site Environment, set:
+
+```env
+VITE_API_URL=https://<your-api-service>.onrender.com
 ```
 
-Set `DATABASE_URL` (and any JWT/secrets your environment requires) in the Render dashboard. Bind uses `PORT` from the platform.
+No trailing slash. Then **Clear build cache & deploy** (or trigger a new deploy) so the login page calls Nest, not the static host.
+
+Locally, leave `VITE_API_URL` unset — Vite proxies `/api` to `http://localhost:4000` (see `frontend/vite.config.ts`). See [`frontend/.env.example`](frontend/.env.example).
 
 ---
 

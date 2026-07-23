@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface MaterialRequestItem {
   id?: string;
@@ -29,7 +29,7 @@ export interface MaterialRequest {
   created_at: string;
 }
 
-const BASE = '/api/material-requests';
+const BASE = `${API_BASE}/api/material-requests`;
 
 export async function getMaterialRequests(project_id?: string, status?: string): Promise<MaterialRequest[]> {
   const params = new URLSearchParams();

@@ -1,6 +1,6 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
-const BASE = '/api/reports';
+const BASE = `${API_BASE}/api/reports`;
 const h = () => ({ headers: getAuthHeaders() });
 
 export interface BudgetVsActual {

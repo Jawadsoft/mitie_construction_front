@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface LabourContractor {
   id: string;
@@ -33,7 +33,7 @@ export interface LabourPayment {
   contractor?: LabourContractor;
 }
 
-const BASE = '/api/labour';
+const BASE = `${API_BASE}/api/labour`;
 
 export const getContractors = async (): Promise<LabourContractor[]> => {
   const res = await fetch(`${BASE}/contractors`, { headers: getAuthHeaders() });

@@ -1,6 +1,6 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
-const BASE = '/api/inventory';
+const BASE = `${API_BASE}/api/inventory`;
 const h = () => getAuthHeaders();
 const json = (r: Response) => { if (!r.ok) return r.json().then(e => { throw new Error(e.message || 'Request failed'); }); return r.json(); };
 

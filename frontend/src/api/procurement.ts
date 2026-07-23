@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface PoItem {
   id: string;
@@ -23,7 +23,7 @@ export interface PurchaseOrder {
   created_at: string;
 }
 
-const BASE = '/api/procurement';
+const BASE = `${API_BASE}/api/procurement`;
 
 export async function getPurchaseOrders(project_id?: string): Promise<PurchaseOrder[]> {
   const params = project_id ? `?project_id=${project_id}` : '';
@@ -63,7 +63,7 @@ export async function createReceipt(
 }
 
 export async function deletePurchaseOrder(id: string): Promise<void> {
-  const res = await fetch(`/api/procurement/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+  const res = await fetch(`${API_BASE}/api/procurement/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to delete purchase order');
 }
 

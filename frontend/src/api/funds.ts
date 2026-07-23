@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface FundSource {
   id: string;
@@ -28,7 +28,7 @@ export interface FundTransaction {
   created_at: string;
 }
 
-const BASE = '/api/funds';
+const BASE = `${API_BASE}/api/funds`;
 
 export async function getFundSources(filters?: {
   project_id?: string;

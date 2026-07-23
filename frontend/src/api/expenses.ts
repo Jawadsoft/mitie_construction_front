@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface Expense {
   id: string;
@@ -30,7 +30,7 @@ export interface ExpensePayment {
   created_at: string;
 }
 
-const BASE = '/api/expenses';
+const BASE = `${API_BASE}/api/expenses`;
 
 export async function getExpenses(filters?: {
   project_id?: string;

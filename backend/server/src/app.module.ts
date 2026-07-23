@@ -24,10 +24,7 @@ import { LandModule } from './land/land.module';
     TypeOrmModule.forRoot({
       type: 'postgres',
       ...(process.env.DATABASE_URL
-        ? {
-            url: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false },
-          }
+        ? { url: process.env.DATABASE_URL }
         : {
             host: process.env.DB_HOST || 'localhost',
             port: Number(process.env.DB_PORT) || 5432,
@@ -35,6 +32,13 @@ import { LandModule } from './land/land.module';
             password: process.env.DB_PASSWORD || 'dealeriq',
             database: process.env.DB_NAME || 'construction_erp',
           }),
+      // Render Postgres requires TLS (internal + external)
+      ssl:
+        process.env.DATABASE_URL ||
+        process.env.NODE_ENV === 'production' ||
+        process.env.DB_SSL === 'true'
+          ? { rejectUnauthorized: false }
+          : false,
       autoLoadEntities: true,
       synchronize: true,
     }),

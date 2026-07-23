@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface LandParcel {
   id: string;
@@ -24,7 +24,7 @@ export interface LandParcel {
   created_at: string;
 }
 
-const BASE = '/api/land/parcels';
+const BASE = `${API_BASE}/api/land/parcels`;
 
 export async function getLandParcels(project_id?: string): Promise<LandParcel[]> {
   const params = project_id ? `?project_id=${project_id}` : '';

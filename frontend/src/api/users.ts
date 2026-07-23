@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface Role { id: string; name: string; description: string | null; }
 export interface User {
@@ -7,7 +7,7 @@ export interface User {
   role?: Role;
 }
 
-const BASE = '/api/users';
+const BASE = `${API_BASE}/api/users`;
 const h = () => getAuthHeaders();
 
 export async function getUsers(): Promise<User[]> {

@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface Customer {
   id: string;
@@ -46,7 +46,7 @@ export interface Sale {
   installments?: SaleInstallment[];
 }
 
-const BASE = '/api/sales';
+const BASE = `${API_BASE}/api/sales`;
 
 export async function getCustomers(): Promise<Customer[]> {
   const res = await fetch(`${BASE}/customers`, { headers: getAuthHeaders() });

@@ -1,4 +1,5 @@
-const API = '';
+import { API_BASE } from './config';
+const API = API_BASE;
 
 function authHeaders() {
   const token = localStorage.getItem('token');

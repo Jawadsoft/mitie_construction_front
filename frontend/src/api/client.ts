@@ -1,4 +1,6 @@
-const API_BASE = import.meta.env.VITE_API_URL || '';
+import { API_BASE } from './config';
+
+export { API_BASE };
 
 export async function login(email: string, password: string) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
@@ -8,9 +10,10 @@ export async function login(email: string, password: string) {
   });
   const contentType = res.headers.get('content-type');
   if (!contentType || !contentType.includes('application/json')) {
-    throw new Error(
-      'Invalid response from server. Is the backend running at http://localhost:4000?',
-    );
+    const hint = API_BASE
+      ? `API at ${API_BASE} did not return JSON (HTTP ${res.status}).`
+      : 'No VITE_API_URL set — requests hit this site instead of Nest. Set VITE_API_URL to your Render API URL and rebuild.';
+    throw new Error(`Invalid response from server. ${hint}`);
   }
   const data = await res.json();
   if (!res.ok) {

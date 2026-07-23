@@ -10,3 +10,18 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
+
+  - type: web
+    name: construction-erp-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Set in Render dashboard to your API URL, e.g. https://construction-erp-api.onrender.com
+      - key: VITE_API_URL
+        sync: false

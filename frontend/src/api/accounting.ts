@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface Account {
   id: string;
@@ -94,7 +94,7 @@ export interface BankReconciliation {
   notes: string | null;
 }
 
-const BASE = '/api/accounting';
+const BASE = `${API_BASE}/api/accounting`;
 
 export async function getAccounts(): Promise<Account[]> {
   const res = await fetch(`${BASE}/accounts`, { headers: getAuthHeaders() });

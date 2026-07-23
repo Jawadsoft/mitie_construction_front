@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface Supplier {
   id: string;
@@ -13,7 +13,7 @@ export interface Supplier {
   created_at: string;
 }
 
-const BASE = '/api/suppliers';
+const BASE = `${API_BASE}/api/suppliers`;
 
 export async function getSuppliers(): Promise<Supplier[]> {
   const res = await fetch(BASE, { headers: getAuthHeaders() });

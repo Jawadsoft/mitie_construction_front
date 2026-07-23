@@ -1,4 +1,4 @@
-import { getAuthHeaders } from './client';
+import { getAuthHeaders, API_BASE } from './client';
 
 export interface CashTransaction {
   id: string;
@@ -21,7 +21,7 @@ export interface DashboardStats {
   stock_value: number;
 }
 
-const BASE = '/api/cashflow';
+const BASE = `${API_BASE}/api/cashflow`;
 
 export async function getCashTransactions(filters?: { project_id?: string; type?: string }): Promise<CashTransaction[]> {
   const params = new URLSearchParams();
