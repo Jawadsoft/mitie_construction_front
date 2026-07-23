@@ -17,12 +17,19 @@ export interface Project {
   expected_completion_date: string | null;
   project_type: string | null;
   total_estimated_budget: string | null;
+  target_sale_price: string | null;
   status: string;
   stages?: Stage[];
   computed?: {
     total_stage_budget: number;
     avg_completion_percent: number;
     stage_count: number;
+    total_spent?: number;
+    total_collected?: number;
+    sold_value?: number;
+    fund_receipts?: number;
+    budget_used_pct?: number;
+    collection_pct?: number;
   };
 }
 

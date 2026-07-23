@@ -25,7 +25,8 @@ export class ProjectsService {
       relations: ['stages', 'stages.budget'],
       order: { created_at: 'DESC' },
     });
-    return projects.map((p) => this.enrichProject(p));
+    const financials = await this.loadProjectFinancials();
+    return projects.map((p) => this.enrichProject(p, financials.get(String(p.id))));
   }
 
   async findOne(id: string) {
@@ -34,7 +35,8 @@ export class ProjectsService {
       relations: ['stages', 'stages.budget', 'stages.progressLogs'],
     });
     if (!project) throw new NotFoundException('Project not found');
-    return this.enrichProject(project);
+    const financials = await this.loadProjectFinancials(id);
+    return this.enrichProject(project, financials.get(String(id)));
   }
 
   async create(dto: CreateProjectDto) {
@@ -45,7 +47,14 @@ export class ProjectsService {
       start_date: dto.start_date,
       expected_completion_date: dto.expected_completion_date,
       project_type: dto.project_type,
-      total_estimated_budget: dto.total_estimated_budget?.toString(),
+      total_estimated_budget:
+        dto.total_estimated_budget != null && dto.total_estimated_budget !== ('' as unknown as number)
+          ? String(dto.total_estimated_budget)
+          : undefined,
+      target_sale_price:
+        dto.target_sale_price != null && dto.target_sale_price !== ('' as unknown as number)
+          ? String(dto.target_sale_price)
+          : undefined,
       status: dto.status || 'Planning',
     });
     return this.projectsRepo.save(project);
@@ -61,7 +70,15 @@ export class ProjectsService {
       updateData.expected_completion_date = dto.expected_completion_date;
     if (dto.project_type !== undefined) updateData.project_type = dto.project_type;
     if (dto.total_estimated_budget !== undefined)
-      updateData.total_estimated_budget = dto.total_estimated_budget.toString();
+      updateData.total_estimated_budget =
+        dto.total_estimated_budget === null || dto.total_estimated_budget === ('' as unknown as number)
+          ? null
+          : String(dto.total_estimated_budget);
+    if (dto.target_sale_price !== undefined)
+      updateData.target_sale_price =
+        dto.target_sale_price === null || dto.target_sale_price === ('' as unknown as number)
+          ? null
+          : String(dto.target_sale_price);
     if (dto.status !== undefined) updateData.status = dto.status;
 
     await this.projectsRepo.update(id, updateData);
@@ -101,6 +118,9 @@ export class ProjectsService {
     await this.dataSource.query(`DELETE FROM labour_advances WHERE project_id = $1`, [id]);
 
     // 5. Expenses & cashflow
+    await this.dataSource.query(`
+      DELETE FROM expense_payments WHERE expense_id IN (
+        SELECT id FROM expenses WHERE project_id = $1)`, [id]);
     await this.dataSource.query(`DELETE FROM expenses WHERE project_id = $1`, [id]);
     await this.dataSource.query(`DELETE FROM cash_transactions WHERE project_id = $1`, [id]);
 
@@ -219,7 +239,55 @@ export class ProjectsService {
     });
   }
 
-  private enrichProject(project: Project) {
+  private async loadProjectFinancials(projectId?: string) {
+    const params: string[] = [];
+    let where = '';
+    if (projectId) {
+      params.push(projectId);
+      where = ` WHERE p.id = $1`;
+    }
+    const rows: Array<{
+      id: string;
+      total_spent: string;
+      total_collected: string;
+      sold_value: string;
+      fund_receipts: string;
+    }> = await this.dataSource.query(
+      `
+      SELECT p.id::text AS id,
+        COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0) AS total_spent,
+        COALESCE((
+          SELECT SUM(CAST(s.total_paid AS NUMERIC)) FROM sales s
+          JOIN property_units pu ON pu.id = s.property_unit_id
+          WHERE pu.project_id = p.id
+        ), 0) AS total_collected,
+        COALESCE((
+          SELECT SUM(CAST(s.total_sale_price AS NUMERIC)) FROM sales s
+          JOIN property_units pu ON pu.id = s.property_unit_id
+          WHERE pu.project_id = p.id
+        ), 0) AS sold_value,
+        COALESCE((
+          SELECT SUM(CAST(ft.amount AS NUMERIC)) FROM fund_transactions ft
+          JOIN fund_sources fs ON fs.id = ft.fund_source_id
+          WHERE fs.project_id = p.id
+        ), 0) AS fund_receipts
+      FROM projects p
+      ${where}
+      `,
+      params,
+    );
+    return new Map(rows.map((r) => [String(r.id), r]));
+  }
+
+  private enrichProject(
+    project: Project,
+    financials?: {
+      total_spent: string;
+      total_collected: string;
+      sold_value: string;
+      fund_receipts: string;
+    },
+  ) {
     const stages = project.stages || [];
     const totalBudget = stages.reduce(
       (sum, s) => sum + Number(s.budget?.total_budget || 0),
@@ -231,12 +299,29 @@ export class ProjectsService {
           stages.length
         : 0;
 
+    const budget = Number(project.total_estimated_budget || totalBudget || 0);
+    const targetSale = Number(project.target_sale_price || 0);
+    const totalSpent = Number(financials?.total_spent || 0);
+    const totalCollected = Number(financials?.total_collected || 0);
+    const soldValue = Number(financials?.sold_value || 0);
+    const fundReceipts = Number(financials?.fund_receipts || 0);
+    const collectionBase = targetSale > 0 ? targetSale : soldValue;
+
     return {
       ...project,
       computed: {
         total_stage_budget: totalBudget,
         avg_completion_percent: Math.round(avgCompletion * 100) / 100,
         stage_count: stages.length,
+        total_spent: totalSpent,
+        total_collected: totalCollected,
+        sold_value: soldValue,
+        fund_receipts: fundReceipts,
+        budget_used_pct: budget > 0 ? Math.min(100, Math.round((totalSpent / budget) * 100)) : 0,
+        collection_pct:
+          collectionBase > 0
+            ? Math.min(100, Math.round((totalCollected / collectionBase) * 100))
+            : 0,
       },
     };
   }

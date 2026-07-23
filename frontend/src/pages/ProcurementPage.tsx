@@ -6,28 +6,60 @@ import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import { getSuppliers } from '../api/suppliers';
 import type { Supplier } from '../api/suppliers';
-import { getMaterials, receiveStock } from '../api/inventory';
+import { getMaterials } from '../api/inventory';
 import type { Material } from '../api/inventory';
 import Modal from '../components/Modal';
+import {
+  getMaterialRequests,
+  getMaterialRequest,
+  createMaterialRequest,
+  submitMaterialRequest,
+  approveMaterialRequest,
+  rejectMaterialRequest,
+  convertMaterialRequestToPo,
+} from '../api/materialRequests';
+import type { MaterialRequest, MaterialRequestItem } from '../api/materialRequests';
 
 const STATUS_COLORS: Record<string, string> = {
   Draft: 'bg-gray-100 text-gray-700',
   Approved: 'bg-blue-100 text-blue-700',
   Received: 'bg-green-100 text-green-700',
   Cancelled: 'bg-red-100 text-red-700',
+  Submitted: 'bg-amber-100 text-amber-800',
+  Rejected: 'bg-red-100 text-red-700',
+  Converted: 'bg-purple-100 text-purple-700',
 };
 
+const MR_STATUS_COLORS = STATUS_COLORS;
+
+type ProcTab = 'orders' | 'requests';
+
+
 export default function ProcurementPage() {
+  const [tab, setTab] = useState<ProcTab>('requests');
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [requests, setRequests] = useState<MaterialRequest[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
+  const [selectedMR, setSelectedMR] = useState<MaterialRequest | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showCreateMR, setShowCreateMR] = useState(false);
+  const [showConvert, setShowConvert] = useState(false);
+  const [convertSupplierId, setConvertSupplierId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const currentUser = (() => {
+    try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
+  })();
+
   const [orderForm, setOrderForm] = useState({ project_id: '', supplier_id: '', order_date: new Date().toISOString().split('T')[0], expected_delivery: '', notes: '' });
   const [items, setItems] = useState<Partial<PoItem>[]>([{ material_name: '', unit: 'pcs', quantity: '1', unit_price: '0', total_price: '0' }]);
+  const [mrForm, setMrForm] = useState({ project_id: '', project_stage_id: '', request_date: new Date().toISOString().split('T')[0], needed_by_date: '', notes: '' });
+  const [mrItems, setMrItems] = useState<Partial<MaterialRequestItem>[]>([
+    { material_id: '', material_name: '', unit: 'pcs', quantity_requested: '1', estimated_unit_cost: '0' },
+  ]);
 
   // Receive-to-inventory modal
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -38,17 +70,87 @@ export default function ProcurementPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([getPurchaseOrders(), getProjects(), getSuppliers(), getMaterials()])
-      .then(([o, p, s, m]) => { setOrders(o); setProjects(p); setSuppliers(s); setMaterials(m); })
+    Promise.all([getPurchaseOrders(), getProjects(), getSuppliers(), getMaterials(), getMaterialRequests()])
+      .then(([o, p, s, m, r]) => { setOrders(o); setProjects(p); setSuppliers(s); setMaterials(m); setRequests(r); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   };
+
 
   useEffect(() => { load(); }, []);
 
   const viewPO = async (id: string) => {
     try { setSelectedPO(await getPurchaseOrder(id)); } catch (e: any) { setError(e.message); }
   };
+
+  const viewMR = async (id: string) => {
+    try { setSelectedMR(await getMaterialRequest(id)); } catch (e: any) { setError(e.message); }
+  };
+
+  const handleCreateMR = async () => {
+    if (!mrForm.project_id) { setError('Project is required'); return; }
+    if (!currentUser?.id) { setError('You must be logged in'); return; }
+    if (mrItems.some(i => !i.material_name || !i.quantity_requested)) {
+      setError('Each item needs a name and quantity');
+      return;
+    }
+    setError('');
+    try {
+      await createMaterialRequest({
+        request: {
+          project_id: mrForm.project_id,
+          project_stage_id: mrForm.project_stage_id || null,
+          requested_by: String(currentUser.id),
+          request_date: mrForm.request_date,
+          needed_by_date: mrForm.needed_by_date || null,
+          notes: mrForm.notes || null,
+          status: 'Draft',
+        },
+        items: mrItems.map((i) => ({
+          material_id: i.material_id || null,
+          material_name: i.material_name!,
+          unit: i.unit || 'pcs',
+          quantity_requested: i.quantity_requested!,
+          estimated_unit_cost: i.estimated_unit_cost || null,
+        })),
+      });
+      setShowCreateMR(false);
+      load();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const handleMRAction = async (action: 'submit' | 'approve' | 'reject') => {
+    if (!selectedMR) return;
+    try {
+      if (action === 'submit') await submitMaterialRequest(selectedMR.id);
+      if (action === 'approve') {
+        if (!currentUser?.id) throw new Error('You must be logged in');
+        await approveMaterialRequest(selectedMR.id, { approved_by: String(currentUser.id) });
+      }
+      if (action === 'reject') {
+        if (!currentUser?.id) throw new Error('You must be logged in');
+        const reason = prompt('Rejection reason:') || 'Rejected';
+        await rejectMaterialRequest(selectedMR.id, { approved_by: String(currentUser.id), rejection_reason: reason });
+      }
+      await viewMR(selectedMR.id);
+      load();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const handleConvertMR = async () => {
+    if (!selectedMR || !convertSupplierId) { setError('Select a supplier'); return; }
+    try {
+      await convertMaterialRequestToPo(selectedMR.id, {
+        supplier_id: convertSupplierId,
+        created_by: currentUser?.id ? String(currentUser.id) : undefined,
+      });
+      setShowConvert(false);
+      setSelectedMR(null);
+      setTab('orders');
+      load();
+    } catch (e: any) { setError(e.message); }
+  };
+
 
   const updateItem = (idx: number, field: keyof PoItem, value: string) => {
     setItems(prev => {
@@ -105,23 +207,16 @@ export default function ProcurementPage() {
     setReceiving(true);
     setError('');
     try {
-      // Create stock ledger entries for each item
-      for (const line of toReceive) {
-        await receiveStock({
-          material_id: line.material_id,
-          quantity: line.quantity,
-          unit_cost: line.unit_cost,
-          movement_date: receiveDate,
-          project_id: selectedPO.project_id,
-          purchase_order_id: selectedPO.id,
-          reference_no: `PO-${selectedPO.id.slice(-6).toUpperCase()}`,
-          notes: `Received from PO #${selectedPO.id.slice(-6).toUpperCase()}`,
-        });
-      }
-      // Mark PO as received
-      await createReceipt(selectedPO.id, { receipt_date: receiveDate, notes: `Received ${toReceive.length} item(s) into inventory` });
+      await createReceipt(selectedPO.id, {
+        receipt_date: receiveDate,
+        notes: `Received ${toReceive.length} item(s) into inventory`,
+        items: toReceive.map((l) => ({
+          material_id: l.material_id,
+          quantity: l.quantity,
+          unit_cost: l.unit_cost,
+        })),
+      });
       setShowReceiveModal(false);
-      // Refresh the PO detail
       const updated = await getPurchaseOrder(selectedPO.id);
       setSelectedPO(updated);
       load();
@@ -147,6 +242,78 @@ export default function ProcurementPage() {
       orders.map(o => [`#${o.id}`, o.order_date, o.status, Number(o.total_amount).toLocaleString(), o.notes ?? ''])
     );
   };
+
+  if (selectedMR) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button onClick={() => setSelectedMR(null)} className="text-blue-600 hover:underline text-sm">← Back</button>
+          <h1 className="text-xl font-bold text-gray-800">{selectedMR.request_no}</h1>
+          <span className={`text-xs px-2 py-1 rounded-full font-medium ${MR_STATUS_COLORS[selectedMR.status] || 'bg-gray-100'}`}>{selectedMR.status}</span>
+        </div>
+        {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+        <div className="bg-white rounded-xl border p-4 grid grid-cols-2 gap-3 text-sm">
+          <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{selectedMR.request_date}</span></div>
+          <div><span className="text-gray-500">Needed by:</span> <span className="font-medium ml-1">{selectedMR.needed_by_date ?? '-'}</span></div>
+          <div><span className="text-gray-500">Project:</span> <span className="font-medium ml-1">{projects.find(p => p.id === selectedMR.project_id)?.name ?? selectedMR.project_id}</span></div>
+          <div><span className="text-gray-500">PO:</span> <span className="font-medium ml-1">{selectedMR.purchase_order_id ?? '-'}</span></div>
+          {selectedMR.rejection_reason && (
+            <div className="col-span-2 text-red-700">Rejection: {selectedMR.rejection_reason}</div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(selectedMR.status === 'Draft' || selectedMR.status === 'Rejected') && (
+            <button onClick={() => handleMRAction('submit')} className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Submit for Approval</button>
+          )}
+          {selectedMR.status === 'Submitted' && (
+            <>
+              <button onClick={() => handleMRAction('approve')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Approve</button>
+              <button onClick={() => handleMRAction('reject')} className="bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm font-medium">Reject</button>
+            </>
+          )}
+          {selectedMR.status === 'Approved' && (
+            <button onClick={() => { setConvertSupplierId(''); setShowConvert(true); }} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Convert to PO</button>
+          )}
+        </div>
+        <div className="bg-white rounded-xl border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-gray-600">Material</th>
+                <th className="px-4 py-3 text-left text-gray-600">Unit</th>
+                <th className="px-4 py-3 text-right text-gray-600">Requested</th>
+                <th className="px-4 py-3 text-right text-gray-600">Approved</th>
+                <th className="px-4 py-3 text-right text-gray-600">Est. Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(selectedMR.items ?? []).map((item) => (
+                <tr key={item.id} className="border-t">
+                  <td className="px-4 py-3 font-medium">{item.material_name}</td>
+                  <td className="px-4 py-3">{item.unit}</td>
+                  <td className="px-4 py-3 text-right">{item.quantity_requested}</td>
+                  <td className="px-4 py-3 text-right">{item.quantity_approved ?? '-'}</td>
+                  <td className="px-4 py-3 text-right font-mono">{item.estimated_unit_cost ? Number(item.estimated_unit_cost).toLocaleString() : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {showConvert && (
+          <Modal title="Convert to Purchase Order" onClose={() => setShowConvert(false)}>
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-gray-700">Supplier</label>
+              <select value={convertSupplierId} onChange={(e) => setConvertSupplierId(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="">Select supplier</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button onClick={handleConvertMR} className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-semibold">Create Draft PO</button>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
 
   if (selectedPO) {
     return (
@@ -311,19 +478,58 @@ export default function ProcurementPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Procurement</h1>
-          <p className="text-sm text-gray-500">Manage purchase orders</p>
+          <p className="text-sm text-gray-500">Material requests → approval → purchase orders → receipt</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={handleExportCSV} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
-          <button onClick={handleExportPDF} className="border border-red-500 text-red-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-50">↓ PDF</button>
-          <button onClick={() => { setError(''); setShowCreate(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ New PO</button>
+          {tab === 'orders' && (
+            <>
+              <button onClick={handleExportCSV} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
+              <button onClick={handleExportPDF} className="border border-red-500 text-red-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-50">↓ PDF</button>
+              <button onClick={() => { setError(''); setShowCreate(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ New PO</button>
+            </>
+          )}
+          {tab === 'requests' && (
+            <button onClick={() => { setError(''); setShowCreateMR(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ Material Request</button>
+          )}
         </div>
+      </div>
+
+      <div className="flex gap-2 border-b">
+        <button onClick={() => setTab('requests')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'requests' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500'}`}>Requests</button>
+        <button onClick={() => setTab('orders')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'orders' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500'}`}>Purchase Orders</button>
       </div>
 
       {error && <p className="text-red-600 text-sm bg-red-50 p-3 rounded-lg">{error}</p>}
 
       {loading ? (
         <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
+      ) : tab === 'requests' ? (
+        requests.length === 0 ? (
+          <div className="text-center text-gray-400 py-10">No material requests yet.</div>
+        ) : (
+          <div className="bg-white rounded-xl border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-gray-600">Request #</th>
+                  <th className="px-4 py-3 text-left text-gray-600">Date</th>
+                  <th className="px-4 py-3 text-left text-gray-600">Project</th>
+                  <th className="px-4 py-3 text-left text-gray-600">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((r) => (
+                  <tr key={r.id} className="border-t hover:bg-blue-50 cursor-pointer" onClick={() => viewMR(r.id)}>
+                    <td className="px-4 py-3 font-medium text-blue-700">{r.request_no}</td>
+                    <td className="px-4 py-3">{r.request_date}</td>
+                    <td className="px-4 py-3">{projects.find((p) => p.id === r.project_id)?.name ?? r.project_id}</td>
+                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${MR_STATUS_COLORS[r.status] || 'bg-gray-100'}`}>{r.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : orders.length === 0 ? (
         <div className="text-center text-gray-400 py-10">No purchase orders yet.</div>
       ) : (
@@ -431,6 +637,75 @@ export default function ProcurementPage() {
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
             </div>
             <button onClick={handleCreate} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Create Purchase Order</button>
+          </div>
+        </Modal>
+      )}
+
+      {showCreateMR && (
+        <Modal title="New Material Request" onClose={() => setShowCreateMR(false)}>
+          <div className="space-y-3">
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project *</label>
+              <select value={mrForm.project_id} onChange={(e) => setMrForm((f) => ({ ...f, project_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="">-- Select --</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Request Date</label>
+                <input type="date" value={mrForm.request_date} onChange={(e) => setMrForm((f) => ({ ...f, request_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Needed By</label>
+                <input type="date" value={mrForm.needed_by_date} onChange={(e) => setMrForm((f) => ({ ...f, needed_by_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm font-medium text-gray-700">Items *</label>
+              <button type="button" onClick={() => setMrItems((prev) => [...prev, { material_id: '', material_name: '', unit: 'pcs', quantity_requested: '1', estimated_unit_cost: '0' }])}
+                className="text-blue-600 text-xs hover:underline">+ Add Item</button>
+            </div>
+            <div className="space-y-2 max-h-52 overflow-y-auto">
+              {mrItems.map((item, idx) => (
+                <div key={idx} className="grid grid-cols-2 gap-2 bg-gray-50 p-2 rounded">
+                  <select
+                    value={item.material_id ?? ''}
+                    onChange={(e) => {
+                      const mat = materials.find((m) => m.id === e.target.value);
+                      setMrItems((prev) => {
+                        const u = [...prev];
+                        u[idx] = {
+                          ...u[idx],
+                          material_id: e.target.value || '',
+                          material_name: mat?.name ?? u[idx].material_name,
+                          unit: mat?.unit ?? u[idx].unit,
+                          estimated_unit_cost: mat?.standard_unit_cost ?? u[idx].estimated_unit_cost,
+                        };
+                        return u;
+                      });
+                    }}
+                    className="col-span-2 border rounded px-2 py-1 text-xs"
+                  >
+                    <option value="">Catalog (optional) / type name below</option>
+                    {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <input placeholder="Material name" value={item.material_name ?? ''} onChange={(e) => setMrItems((prev) => { const u = [...prev]; u[idx] = { ...u[idx], material_name: e.target.value }; return u; })}
+                    className="col-span-2 border rounded px-2 py-1 text-xs" />
+                  <input placeholder="Qty" type="number" value={item.quantity_requested ?? ''} onChange={(e) => setMrItems((prev) => { const u = [...prev]; u[idx] = { ...u[idx], quantity_requested: e.target.value }; return u; })}
+                    className="border rounded px-2 py-1 text-xs" />
+                  <input placeholder="Est. unit cost" type="number" value={item.estimated_unit_cost ?? ''} onChange={(e) => setMrItems((prev) => { const u = [...prev]; u[idx] = { ...u[idx], estimated_unit_cost: e.target.value }; return u; })}
+                    className="border rounded px-2 py-1 text-xs" />
+                </div>
+              ))}
+            </div>
+            <textarea placeholder="Notes" value={mrForm.notes} onChange={(e) => setMrForm((f) => ({ ...f, notes: e.target.value }))} rows={2}
+              className="w-full border rounded-lg px-3 py-2 text-sm" />
+            <button onClick={handleCreateMR} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Create Request</button>
           </div>
         </Modal>
       )}

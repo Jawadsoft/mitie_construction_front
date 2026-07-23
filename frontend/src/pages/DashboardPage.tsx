@@ -1,14 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getDashboardStats } from '../api/cashflow';
+import { getDashboardStats, type DashboardStats } from '../api/cashflow';
 import StatCard from '../components/StatCard';
-
-interface Stats {
-  cash_balance: number; cash_in: number; cash_out: number;
-  active_projects: number; total_budget: number; total_expenses: number;
-  total_labour: number; total_cost: number; total_revenue: number;
-  collected_revenue: number; pending_receivables: number; supplier_payables: number;
-  total_units: number; sold_units: number; avg_stage_completion: number; expected_profit: number;
-}
 
 function fmt(n: number) {
   if (Math.abs(n) >= 10_000_000) return `PKR ${(n / 1_000_000).toFixed(1)}M`;
@@ -27,7 +19,7 @@ function ProgressBar({ value, max, color = 'blue' }: { value: number; max: numbe
 }
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -72,7 +64,7 @@ export default function DashboardPage() {
         <StatCard title="Total Cost" value={fmt(stats?.total_cost ?? 0)} icon="💸" color="red" subtitle={`Expenses + Labour`} />
         <StatCard title="Expected Profit" value={fmt(stats?.expected_profit ?? 0)} icon="📈" color={((stats?.expected_profit ?? 0) >= 0) ? 'green' : 'red'} />
         <StatCard title="Avg Stage Progress" value={`${Math.round(stats?.avg_stage_completion ?? 0)}%`} icon="🏛️" color="purple" subtitle="Active stages" />
-        <StatCard title="Stock Value" value={fmt((stats as any)?.stock_value ?? 0)} icon="🏭" color="indigo" subtitle="Materials in store" />
+        <StatCard title="Stock Value" value={fmt(stats?.stock_value ?? 0)} icon="🏭" color="indigo" subtitle="Materials in store" />
       </div>
 
       {/* Row 3 – Progress bars */}

@@ -47,7 +47,14 @@ export async function createPurchaseOrder(dto: { order: Partial<PurchaseOrder>; 
   return res.json();
 }
 
-export async function createReceipt(purchase_order_id: string, dto: { receipt_date: string; notes?: string }): Promise<void> {
+export async function createReceipt(
+  purchase_order_id: string,
+  dto: {
+    receipt_date: string;
+    notes?: string;
+    items?: { material_id: string; quantity: string; unit_cost: string }[];
+  },
+): Promise<void> {
   const res = await fetch(`${BASE}/${purchase_order_id}/receipts`, {
     method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),

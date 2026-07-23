@@ -5,7 +5,13 @@ import { FundsService } from './funds.service';
 export class FundsController {
   constructor(private readonly svc: FundsService) {}
 
-  @Get('sources') findSources(@Query('project_id') project_id?: string) { return this.svc.findSources(project_id); }
+  @Get('sources') findSources(
+    @Query('project_id') project_id?: string,
+    @Query('bank_account_id') bank_account_id?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.svc.findSources({ project_id, bank_account_id, status });
+  }
   @Get('sources/:id') findOneSource(@Param('id') id: string) { return this.svc.findOneSource(id); }
   @Post('sources') createSource(@Body() dto: any) { return this.svc.createSource(dto); }
   @Patch('sources/:id') updateSource(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSource(id, dto); }

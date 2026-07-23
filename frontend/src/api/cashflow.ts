@@ -18,6 +18,7 @@ export interface DashboardStats {
   total_labour: number; total_cost: number; total_revenue: number;
   collected_revenue: number; pending_receivables: number; supplier_payables: number;
   total_units: number; sold_units: number; avg_stage_completion: number; expected_profit: number;
+  stock_value: number;
 }
 
 const BASE = '/api/cashflow';

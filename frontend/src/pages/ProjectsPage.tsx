@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects';
 import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
+import PakistanLocationInput from '../components/PakistanLocationInput';
+import ProjectQuickEntry from '../components/ProjectQuickEntry';
+import type { QuickEntryKind } from '../components/ProjectQuickEntry';
 
 const STATUS_COLORS: Record<string, string> = {
   Planning: 'bg-slate-100 text-slate-700',
@@ -12,6 +15,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUSES = ['Planning', 'Active', 'On Hold', 'Completed', 'Sold'];
+const PROJECT_TYPES = ['Residential', 'Commercial'] as const;
 
 interface Props {
   onSelectProject: (id: string) => void;
@@ -26,9 +30,20 @@ export default function ProjectsPage({ onSelectProject }: Props) {
   const [error, setError] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
-  const emptyForm = { name: '', location: '', project_type: '', total_estimated_budget: '', start_date: '', expected_completion_date: '', status: 'Planning', plot_size: '' };
+  const emptyForm = {
+    name: '',
+    location: '',
+    project_type: 'Residential',
+    total_estimated_budget: '',
+    target_sale_price: '',
+    start_date: '',
+    expected_completion_date: '',
+    status: 'Planning',
+    plot_size: '',
+  };
   const [form, setForm] = useState(emptyForm);
   const [editForm, setEditForm] = useState(emptyForm);
+  const [quickEntry, setQuickEntry] = useState<{ project: Project; kind: QuickEntryKind } | null>(null);
 
   const load = async () => {
     try {
@@ -43,9 +58,15 @@ export default function ProjectsPage({ onSelectProject }: Props) {
   const openEdit = (p: Project) => {
     setEditing(p);
     setEditForm({
-      name: p.name, location: p.location ?? '', project_type: p.project_type ?? '',
-      total_estimated_budget: p.total_estimated_budget ?? '', start_date: p.start_date ?? '',
-      expected_completion_date: p.expected_completion_date ?? '', status: p.status, plot_size: p.plot_size ?? '',
+      name: p.name,
+      location: p.location ?? '',
+      project_type: p.project_type === 'Commercial' ? 'Commercial' : 'Residential',
+      total_estimated_budget: p.total_estimated_budget ?? '',
+      target_sale_price: p.target_sale_price ?? '',
+      start_date: p.start_date ?? '',
+      expected_completion_date: p.expected_completion_date ?? '',
+      status: p.status,
+      plot_size: p.plot_size ?? '',
     });
     setShowEditModal(true);
   };
@@ -53,7 +74,12 @@ export default function ProjectsPage({ onSelectProject }: Props) {
   const handleUpdate = async () => {
     if (!editing) return;
     try {
-      await updateProject(editing.id, { ...editForm, total_estimated_budget: editForm.total_estimated_budget || null } as any);
+      const payload: Partial<Project> = {
+        ...editForm,
+        total_estimated_budget: editForm.total_estimated_budget || null,
+        target_sale_price: editForm.target_sale_price || null,
+      };
+      await updateProject(editing.id, payload);
       setShowEditModal(false);
       await load();
     } catch { setError('Failed to update project'); }
@@ -62,7 +88,12 @@ export default function ProjectsPage({ onSelectProject }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createProject({ ...form, total_estimated_budget: form.total_estimated_budget || null } as any);
+      const payload: Partial<Project> = {
+        ...form,
+        total_estimated_budget: form.total_estimated_budget || null,
+        target_sale_price: form.target_sale_price || null,
+      };
+      await createProject(payload);
       setShowForm(false);
       setForm(emptyForm);
       await load();
@@ -80,7 +111,9 @@ export default function ProjectsPage({ onSelectProject }: Props) {
       `This cannot be undone.`
     )) return;
     try { await deleteProject(id); await load(); }
-    catch (e: any) { setError(e.message || 'Failed to delete project'); }
+    catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to delete project');
+    }
   };
 
   const filtered = filterStatus ? projects.filter(p => p.status === filterStatus) : projects;
@@ -115,23 +148,66 @@ export default function ProjectsPage({ onSelectProject }: Props) {
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Project Name *</label>
-              <input required className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input
+                required
+                placeholder="e.g. Gulberg Residencia Block A"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Location</label>
-              <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+              <PakistanLocationInput
+                value={form.location}
+                onChange={(location) => setForm((f) => ({ ...f, location }))}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Project Type</label>
-              <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder="Residential / Commercial…" value={form.project_type} onChange={e => setForm(f => ({ ...f, project_type: e.target.value }))} />
+              <div className="flex gap-4 pt-1">
+                {PROJECT_TYPES.map((t) => (
+                  <label key={t} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="project_type"
+                      value={t}
+                      checked={form.project_type === t}
+                      onChange={() => setForm((f) => ({ ...f, project_type: t }))}
+                    />
+                    {t}
+                  </label>
+                ))}
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Plot Size</label>
-              <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder="e.g. 10 Marla" value={form.plot_size} onChange={e => setForm(f => ({ ...f, plot_size: e.target.value }))} />
+              <input
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="e.g. 10 Marla"
+                value={form.plot_size}
+                onChange={e => setForm(f => ({ ...f, plot_size: e.target.value }))}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Estimated Budget (PKR)</label>
-              <input type="number" className="w-full rounded border border-slate-300 px-3 py-2 text-sm" value={form.total_estimated_budget} onChange={e => setForm(f => ({ ...f, total_estimated_budget: e.target.value }))} />
+              <input
+                type="number"
+                placeholder="e.g. 50000000"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                value={form.total_estimated_budget}
+                onChange={e => setForm(f => ({ ...f, total_estimated_budget: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Target Sale Price (PKR)</label>
+              <input
+                type="number"
+                placeholder="e.g. 75000000"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                value={form.target_sale_price}
+                onChange={e => setForm(f => ({ ...f, target_sale_price: e.target.value }))}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
@@ -186,14 +262,63 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-400">Stages</p>
-                  <p className="font-medium">{p.computed?.stage_count ?? 0}</p>
+                  <p className="text-slate-400">Target Sale</p>
+                  <p className="font-medium">
+                    {p.target_sale_price
+                      ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
+                      : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Spent</p>
+                  <p className="font-medium text-red-700">
+                    PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Collected</p>
+                  <p className="font-medium text-green-700">
+                    PKR {Number(p.computed?.total_collected ?? 0).toLocaleString()}
+                  </p>
                 </div>
               </div>
+              {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400">Budget used</span>
+                    <span className="font-medium">{p.computed?.budget_used_pct ?? 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 rounded-full transition-all"
+                      style={{ width: `${p.computed?.budget_used_pct ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {(Number(p.target_sale_price) > 0 || Number(p.computed?.total_collected) > 0) && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400">Sale collections</span>
+                    <span className="font-medium">{p.computed?.collection_pct ?? 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-600 rounded-full transition-all"
+                      style={{ width: `${p.computed?.collection_pct ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {Number(p.computed?.fund_receipts) > 0 && (
+                <p className="text-xs text-slate-500">
+                  Fund receipts: PKR {Number(p.computed?.fund_receipts).toLocaleString()}
+                </p>
+              )}
               {p.computed && p.computed.stage_count > 0 && (
                 <div>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400">Completion</span>
+                    <span className="text-slate-400">Stage completion</span>
                     <span className="font-medium">{p.computed.avg_completion_percent}%</span>
                   </div>
                   <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -204,6 +329,29 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                   </div>
                 </div>
               )}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <button
+                  type="button"
+                  className="text-xs rounded border border-red-200 text-red-700 px-2 py-1 hover:bg-red-50"
+                  onClick={() => setQuickEntry({ project: p, kind: 'expense' })}
+                >
+                  + Expense
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded border border-green-200 text-green-700 px-2 py-1 hover:bg-green-50"
+                  onClick={() => setQuickEntry({ project: p, kind: 'collection' })}
+                >
+                  + Collection
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50"
+                  onClick={() => setQuickEntry({ project: p, kind: 'payment' })}
+                >
+                  + Payment
+                </button>
+              </div>
               <div className="flex gap-2 pt-1">
                 <button className="flex-1 text-xs rounded border border-slate-300 py-1.5 hover:bg-slate-50" onClick={() => onSelectProject(p.id)}>View Details</button>
                 <button className="text-xs rounded border border-blue-200 text-blue-600 px-3 py-1.5 hover:bg-blue-50" onClick={() => openEdit(p)}>Edit</button>
@@ -219,20 +367,67 @@ export default function ProjectsPage({ onSelectProject }: Props) {
           <div className="space-y-3">
             {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</p>}
             <div className="grid gap-3 md:grid-cols-2">
-              {[
-                { label: 'Project Name *', key: 'name' }, { label: 'Location', key: 'location' },
-                { label: 'Project Type', key: 'project_type' }, { label: 'Plot Size', key: 'plot_size' },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">{f.label}</label>
-                  <input className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={(editForm as any)[f.key]} onChange={e => setEditForm(prev => ({ ...prev, [f.key]: e.target.value }))} />
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Project Name *</label>
+                <input
+                  placeholder="e.g. Gulberg Residencia Block A"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.name}
+                  onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Location</label>
+                <PakistanLocationInput
+                  value={editForm.location}
+                  onChange={(location) => setEditForm((prev) => ({ ...prev, location }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Project Type</label>
+                <div className="flex gap-4 pt-1">
+                  {PROJECT_TYPES.map((t) => (
+                    <label key={t} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="radio"
+                        name="edit_project_type"
+                        value={t}
+                        checked={editForm.project_type === t}
+                        onChange={() => setEditForm((prev) => ({ ...prev, project_type: t }))}
+                      />
+                      {t}
+                    </label>
+                  ))}
                 </div>
-              ))}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Plot Size</label>
+                <input
+                  placeholder="e.g. 10 Marla"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.plot_size}
+                  onChange={e => setEditForm(prev => ({ ...prev, plot_size: e.target.value }))}
+                />
+              </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Estimated Budget (PKR)</label>
-                <input type="number" className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                  value={editForm.total_estimated_budget} onChange={e => setEditForm(f => ({ ...f, total_estimated_budget: e.target.value }))} />
+                <input
+                  type="number"
+                  placeholder="e.g. 50000000"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.total_estimated_budget}
+                  onChange={e => setEditForm(f => ({ ...f, total_estimated_budget: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Target Sale Price (PKR)</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 75000000"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.target_sale_price}
+                  onChange={e => setEditForm(f => ({ ...f, target_sale_price: e.target.value }))}
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
@@ -257,6 +452,15 @@ export default function ProjectsPage({ onSelectProject }: Props) {
             </button>
           </div>
         </Modal>
+      )}
+
+      {quickEntry && (
+        <ProjectQuickEntry
+          project={quickEntry.project}
+          kind={quickEntry.kind}
+          onClose={() => setQuickEntry(null)}
+          onSaved={() => { load(); }}
+        />
       )}
     </div>
   );

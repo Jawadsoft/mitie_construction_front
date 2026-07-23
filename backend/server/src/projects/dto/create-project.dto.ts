@@ -6,5 +6,6 @@ export class CreateProjectDto {
   expected_completion_date?: string;
   project_type?: string;
   total_estimated_budget?: number;
+  target_sale_price?: number;
   status?: string;
 }

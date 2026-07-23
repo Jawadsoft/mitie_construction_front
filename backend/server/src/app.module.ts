@@ -17,6 +17,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { ReportsModule } from './reports/reports.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SettingsModule } from './settings/settings.module';
+import { LandModule } from './land/land.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { SettingsModule } from './settings/settings.module';
     ReportsModule,
     InventoryModule,
     SettingsModule,
+    LandModule,
   ],
   controllers: [AppController],
   providers: [AppService],

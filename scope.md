@@ -1,4 +1,5 @@
 # Construction ERP System
+
 ## Project Scope Document
 
 ### Technology Stack
@@ -349,15 +350,14 @@ Profit must be calculated automatically.
 
 ### Formula
 
-
 Profit = Revenue from Sale
+
 - Land Cost
 - Construction Cost
 - Labour Cost
 - Supplier Payments
 - Overhead Costs
 - Financing Costs
-
 
 ### Profit Reports
 
@@ -419,6 +419,7 @@ Central control dashboard.
 ---
 
 # 18. Database Entities (High Level)
+
 users
 roles
 permissions
@@ -446,7 +447,6 @@ accounts
 journal_entries
 documents
 activity_logs
-
 
 ---
 
@@ -522,3 +522,26 @@ The ERP will allow the business to:
 - Manage investors
 - Track property sales
 - Calculate profit automatically
+
+### What to build next (commercial order)
+
+**Authoritative priority list:** [docs/Tasks.md](docs/Tasks.md) commercial roadmap **P1–P5**.
+
+1. **P1** — Accounting deepen (COA / JE / GL foundation already shipped; auto-post journals, accounting RBAC)
+2. **P2** — Material Request approval deepen (basic trail shipped; multi-level approvals / notifications)
+3. **P3** — BOQ (Bill of Quantities) — see §5 above
+4. **P4** — Equipment & machinery (registry, fuel, maintenance)
+5. **P5** — Document management (drawings, contracts, NOCs, approvals, site photos) — see §15 above
+
+Later / parallel (not ahead of P3–P5 for greenfield): variation orders, native mobile app, forecasting, production migrate/`synchronize` gate. Do **not** use an older Document→Equipment→BOQ order.
+
+**Recently added:** Land Registry, Material Request → Approval → PO trail, General Ledger, Balance Sheet, Bank Reconciliation, JE Draft/Posted posting.
+
+Future HR should include:
+
+Office Staff
+Recruitment
+Leave
+Payroll
+Performance
+Departments

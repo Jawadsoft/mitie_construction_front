@@ -14,6 +14,12 @@ export class PurchaseOrder {
   @Column({ type: 'bigint', unsigned: true })
   supplier_id: string;
 
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  material_request_id: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  created_by: string | null;
+
   @Column({ type: 'date' })
   order_date: string;
 

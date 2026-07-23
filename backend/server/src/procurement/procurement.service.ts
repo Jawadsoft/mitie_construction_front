@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PurchaseOrder } from './entities/purchase-order.entity';
 import { PoItem } from './entities/po-item.entity';
 import { MaterialReceipt } from './entities/material-receipt.entity';
+import { InventoryService } from '../inventory/inventory.service';
 
 @Injectable()
 export class ProcurementService {
@@ -11,6 +12,8 @@ export class ProcurementService {
     @InjectRepository(PurchaseOrder) private readonly poRepo: Repository<PurchaseOrder>,
     @InjectRepository(PoItem) private readonly itemRepo: Repository<PoItem>,
     @InjectRepository(MaterialReceipt) private readonly receiptRepo: Repository<MaterialReceipt>,
+    @Inject(forwardRef(() => InventoryService))
+    private readonly inventoryService: InventoryService,
   ) {}
 
   findAll(filters: { project_id?: string; status?: string; supplier_id?: string }) {
@@ -47,18 +50,62 @@ export class ProcurementService {
     return this.findOne(id);
   }
 
-  async createReceipt(purchase_order_id: string, dto: { receipt_date: string; notes?: string }) {
+  async createReceipt(
+    purchase_order_id: string,
+    dto: {
+      receipt_date: string;
+      notes?: string;
+      items?: { material_id: string; quantity: string; unit_cost: string }[];
+    },
+  ) {
     const po = await this.poRepo.findOne({ where: { id: purchase_order_id } });
     if (!po) throw new NotFoundException('Purchase order not found');
+
     const receipt = await this.receiptRepo.save(
-      this.receiptRepo.create({ purchase_order_id, receipt_date: dto.receipt_date, notes: dto.notes ?? null, status: 'Received' }),
+      this.receiptRepo.create({
+        purchase_order_id,
+        receipt_date: dto.receipt_date,
+        notes: dto.notes ?? null,
+        status: 'Received',
+      }),
     );
+
+    for (const line of dto.items || []) {
+      if (!line.material_id || !Number(line.quantity)) continue;
+      await this.inventoryService.receiveStock({
+        material_id: line.material_id,
+        quantity: line.quantity,
+        unit_cost: line.unit_cost || '0',
+        movement_date: dto.receipt_date,
+        project_id: po.project_id,
+        purchase_order_id,
+        reference_no: `PO-${purchase_order_id}`,
+        notes: dto.notes,
+      });
+    }
+
+    const poItems = await this.itemRepo.find({ where: { purchase_order_id } });
+    for (const poItem of poItems) {
+      const match = (dto.items || []).find(
+        (i) =>
+          poItem.material_id === i.material_id ||
+          (!poItem.material_id && Number(i.quantity) > 0),
+      );
+      if (match) {
+        await this.itemRepo.update(poItem.id, {
+          received_qty: (Number(poItem.received_qty) + Number(match.quantity)).toString(),
+          material_id: poItem.material_id || match.material_id,
+        });
+      }
+    }
+
     await this.poRepo.update(purchase_order_id, { status: 'Received' });
     return receipt;
   }
 
   getReceipts(purchase_order_id?: string) {
-    const q = this.receiptRepo.createQueryBuilder('r')
+    const q = this.receiptRepo
+      .createQueryBuilder('r')
       .leftJoinAndSelect('r.purchase_order', 'po')
       .orderBy('r.receipt_date', 'DESC');
     if (purchase_order_id) q.andWhere('r.purchase_order_id = :id', { id: purchase_order_id });

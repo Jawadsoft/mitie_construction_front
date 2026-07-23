@@ -140,7 +140,7 @@ export class MaterialRequestsService {
     return this.findOne(id);
   }
 
-  async convertToPo(id: string, dto: { supplier_id: string; order_date?: string; expected_delivery?: string; notes?: string }) {
+  async convertToPo(id: string, dto: { supplier_id: string; created_by?: string; order_date?: string; expected_delivery?: string; notes?: string }) {
     const mr = await this.findOne(id);
     if (mr.status !== 'Approved') {
       throw new BadRequestException('Only Approved requests can be converted to a PO');
@@ -155,6 +155,8 @@ export class MaterialRequestsService {
         project_id: mr.project_id,
         project_stage_id: mr.project_stage_id,
         supplier_id: dto.supplier_id,
+        material_request_id: mr.id,
+        created_by: dto.created_by ?? null,
         order_date: dto.order_date || new Date().toISOString().slice(0, 10),
         expected_delivery: dto.expected_delivery ?? null,
         status: 'Draft',
@@ -172,6 +174,8 @@ export class MaterialRequestsService {
       await this.poItemRepo.save(
         this.poItemRepo.create({
           purchase_order_id: po.id,
+          material_id: item.material_id,
+          material_request_item_id: item.id,
           material_name: item.material_name,
           unit: item.unit,
           quantity: qty.toString(),

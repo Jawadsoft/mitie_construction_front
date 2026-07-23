@@ -18,9 +18,10 @@ import TemplatesPage from './pages/TemplatesPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
 import GuidePage from './pages/GuidePage'
+import LandPage from './pages/LandPage'
 
 type Page =
-  | 'login' | 'dashboard' | 'projects' | 'project-detail'
+  | 'login' | 'dashboard' | 'projects' | 'project-detail' | 'land'
   | 'suppliers' | 'labour' | 'expenses' | 'cashflow'
   | 'procurement' | 'funds' | 'sales' | 'accounting'
   | 'users' | 'reports' | 'inventory' | 'templates' | 'profile' | 'settings' | 'guide'
@@ -35,8 +36,15 @@ const NAV_SECTIONS = [
     ]
   },
   {
+    label: 'Capital',
+    items: [
+      { id: 'funds', label: '💼 Funds' },
+    ]
+  },
+  {
     label: 'Projects',
     items: [
+      { id: 'land', label: '📜 Land Registry' },
       { id: 'projects', label: '🏗️ Projects' },
       { id: 'expenses', label: '💸 Expenses' },
       { id: 'labour', label: '👷 Labour' },
@@ -48,7 +56,6 @@ const NAV_SECTIONS = [
     label: 'Business',
     items: [
       { id: 'suppliers', label: '🏢 Suppliers' },
-      { id: 'funds', label: '💼 Funds' },
       { id: 'sales', label: '🏠 Sales' },
     ]
   },
@@ -264,6 +271,7 @@ function App() {
 
           {page === 'dashboard' && <DashboardPage />}
           {page === 'projects' && <ProjectsPage onSelectProject={handleSelectProject} />}
+          {page === 'land' && <LandPage />}
           {page === 'project-detail' && selectedProjectId && (
             <ProjectDetailPage projectId={selectedProjectId} onBack={() => setPage('projects')} />
           )}

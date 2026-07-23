@@ -9,6 +9,12 @@ export class PoItem {
   @Column({ type: 'bigint', unsigned: true })
   purchase_order_id: string;
 
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  material_id: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  material_request_item_id: string | null;
+
   @Column({ type: 'varchar', length: 200 })
   material_name: string;
 

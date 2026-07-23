@@ -27,6 +27,9 @@ export class Project {
   @Column({ type: 'decimal', precision: 18, scale: 2, nullable: true })
   total_estimated_budget: string | null;
 
+  @Column({ type: 'decimal', precision: 18, scale: 2, nullable: true })
+  target_sale_price: string | null;
+
   @Column({ type: 'varchar', length: 50, default: 'Planning' })
   status: string;
 
