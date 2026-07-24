@@ -89,12 +89,31 @@ Composite PK: `role_id` + `permission_id` → `roles`, `permissions`.
 |--------|------|-------|
 | `id` | bigint PK | |
 | `name` | varchar(150) | |
-| `location`, `plot_size`, `project_type` | varchar nullable | |
+| `location` | varchar nullable | |
+| `plot_size` | varchar nullable | Legacy free-text; prefer `plot_size_sqft` |
+| `plot_size_sqft` | numeric(14,4) nullable | Canonical plot area in square feet |
+| `project_type` | varchar(50) | `READY_PROPERTY` \| `LAND` (required on create) |
+| `project_subtype` | varchar(50) | See enums below; required on create |
+| `project_strategy` | varchar(50) | `DIRECT_SALE` \| `DEVELOPMENT` (Ready Property → Direct Sale only) |
+| `asset_class` | varchar nullable | Derived Residential / Commercial / Land |
+| `project_category`, `project_purpose` | varchar nullable | **Obsolete** columns; app no longer writes them |
 | `start_date`, `expected_completion_date` | date nullable | |
 | `total_estimated_budget` | decimal(18,2) nullable | Cost budget |
 | `target_sale_price` | decimal(18,2) nullable | Target sale / exit price |
-| `status` | varchar(50) default `Planning` | string, not DB enum |
+| `status` | varchar(50) default `Planning` | Whitelist: Planning, Active, On Hold, Completed, Sold, Sold During Construction, Cancelled |
+| `sold_as_is` | boolean default false | Whole-project mid-construction sale (Sold As-Is) |
+| `sold_at` | date nullable | |
+| `sold_price` | decimal(18,2) nullable | |
+| `sold_buyer_name` | varchar(150) nullable | |
+| `sold_notes` | text nullable | |
 | `created_at`, `updated_at` | timestamp | |
+
+**Subtype enums**
+
+- `READY_PROPERTY`: `ALREADY_CONSTRUCTED_HOUSE`, `APARTMENT`, `COMMERCIAL_SHOP`, `WAREHOUSE`
+- `LAND`: `EMPTY_PLOT`, `RAW_LAND`, `AGRICULTURAL_LAND`, `COMMERCIAL_PLOT`
+
+**Validation:** subtype must belong to type; `READY_PROPERTY` + `DEVELOPMENT` → 400. Stage create/update on `DIRECT_SALE` → 400. Stages also locked when status is Sold / Sold During Construction / Cancelled / Completed. `DEVELOPMENT` create auto-seeds 11 construction stages. Columns via TypeORM `synchronize` until migrations are gated.
 
 Hub for most domains via soft `project_id`.
 
@@ -111,6 +130,10 @@ Hub for most domains via soft `project_id`.
 | `completion_percent` | decimal(5,2) default 0 | |
 | `status` | varchar(50) default `Planned` | |
 | `created_at`, `updated_at` | timestamp | |
+
+API responses enrich each stage with `actual_cost` = sum of linked `expenses.amount` for that `project_stage_id`.
+
+**DEVELOPMENT template (auto-seeded on create):** Land Purchase → Design → Approval → Excavation → Foundation → Structure → Masonry → Electrical → Plumbing → Finishing → Ready For Sale.
 
 ### `stage_budgets`
 
@@ -225,11 +248,11 @@ Bill settlements: FK `expense_id`; `paid_date`, `amount`, `payment_method`, opti
 
 ### `fund_sources`
 
-Primary link: required `bank_account_id` → `bank_accounts` (partner bank; banks default-link to COA `1000` Cash & Bank). Optional `project_id` → `projects` (for project-card rollups). `source_name`; **enum** `source_type`: `EQUITY`, `LOAN`, `INVESTOR`, `ADVANCE_SALES`, `OTHER`; `total_committed`, `received_so_far`; **status** varchar: `Committed` | `Partially_Received` | `Fully_Received` | `Cancelled` (derived from receipts except Cancelled, which is manual); `expected_date`, `notes`.
+Primary link: required `bank_account_id` → `bank_accounts` (partner bank; each bank gets its own COA child under `1000` Cash & Bank). Optional `project_id` → `projects` (for project-card rollups). `source_name`; **enum** `source_type`: `EQUITY`, `LOAN`, `INVESTOR`, `ADVANCE_SALES`, `OTHER`; `total_committed`, `received_so_far`; **status** varchar: `Committed` | `Partially_Received` | `Fully_Received` | `Cancelled` (derived from receipts except Cancelled, which is manual); `expected_date`, `notes`.
 
 ### `fund_transactions`
 
-FK `fund_source_id`; `transaction_date`, `amount`; optional `cash_transaction_id`. Creating a receipt auto-posts JE `FUND-*`: Dr bank COA (or `1000`) / Cr by type (`2100` loan, `3000` equity/investor, `2200` advances, `4100` other).
+FK `fund_source_id`; `transaction_date`, `amount`; optional `cash_transaction_id`. Creating a receipt auto-posts JE `FUND-*`: Dr bank COA sub-account under `1000` / Cr by type (`2100` loan, `3000` equity/investor, `2200` advances, `4100` other).
 
 ### `cash_transactions`
 
@@ -249,11 +272,11 @@ Shared cash book. **enum** `type`: `IN`, `OUT`. `amount`, `method`, optional `re
 
 ### `sales`
 
-FK `property_unit_id`, `customer_id`; `sale_date`, `total_sale_price`, `total_paid`; **enum** `status`: `Active`, `Cancelled`, `Completed`.
+FK `property_unit_id`, `customer_id`; `sale_date`, `total_sale_price`, `total_paid`; **enum** `status`: `Active`, `Cancelled`, `Completed` (set to `Completed` when fully paid via installment pay or collect).
 
 ### `sale_installments`
 
-FK `sale_id`; `due_date`, `due_amount`, `paid_amount`, `paid_date`; **enum** `status`: `Pending`, `Partial`, `Paid`, `Overdue`.
+FK `sale_id`; `due_date`, `due_amount`, `paid_amount`, `paid_date`; **enum** `status`: `Pending`, `Partial`, `Paid`, `Overdue`. Payments via `POST .../installments/:id/pay` or FIFO allocation from `POST .../list/:id/collect` (may insert a catch-up installment with note for full/direct remainder).
 
 ---
 
@@ -273,7 +296,7 @@ FK `journal_entry_id`, `account_id`; **enum** `dr_cr`: `DEBIT`, `CREDIT`; `amoun
 
 ### `bank_accounts`
 
-Optional GL `account_id`; `name`, `bank_name`, `account_number`, `currency` default `PKR`, `opening_balance`, `is_active`.
+Optional GL `account_id` → COA asset (auto-created child of `1000` Cash & Bank on create, codes `1001`–`1099`); `name`, `bank_name`, `account_number`, `currency` default `PKR`, `opening_balance` (posts JE `BANK-OPEN-*` when > 0), `is_active`.
 
 ### `bank_statement_lines`
 
@@ -282,6 +305,18 @@ Optional GL `account_id`; `name`, `bank_name`, `account_number`, `currency` defa
 ### `bank_reconciliations`
 
 `bank_account_id`, `period_start`, `period_end`; balances; `status` varchar default `Open`; `notes`; optional `created_by`.
+
+### `app_settings`
+
+Key/value config store (JSONB `value`).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `key` | varchar(100) PK | e.g. `measurement.standard`, `measurement.marla_sqft` |
+| `value` | jsonb | Scalar or object JSON |
+| `updated_at` | timestamp | |
+
+Measurement defaults (lazy on first GET if missing): standard `PAKISTAN`, marla = `272.25` sq ft. Gazz is fixed at 9 sq ft (not stored).
 
 ---
 
@@ -300,7 +335,8 @@ Optional GL `account_id`; `name`, `bank_name`, `account_number`, `currency` defa
 | Cashflow | cash_transactions | 1 |
 | Sales | customers, property_units, sales, sale_installments | 4 |
 | Accounting | accounts, JE + lines, bank* | 6 |
-| **Total** | | **36** |
+| Settings | app_settings | 1 |
+| **Total** | | **37** |
 
 ## Seeds / reference SQL
 

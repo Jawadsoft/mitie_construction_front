@@ -1,6 +1,7 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { SettingsService, type MeasurementStandard } from './settings.service';
 
 // Tables to delete in correct FK-safe order (with FK checks disabled)
 // mode: 'transactions' → clears financial/operational records only
@@ -41,7 +42,20 @@ export class SettingsController {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly settingsService: SettingsService,
   ) {}
+
+  @Get('measurement')
+  getMeasurement() {
+    return this.settingsService.getMeasurement();
+  }
+
+  @Patch('measurement')
+  updateMeasurement(
+    @Body() body: { standard?: MeasurementStandard; marla_sqft?: number },
+  ) {
+    return this.settingsService.updateMeasurement(body);
+  }
 
   @Post('reset')
   async reset(@Body() body: { mode: 'transactions' | 'full'; confirm: string }) {

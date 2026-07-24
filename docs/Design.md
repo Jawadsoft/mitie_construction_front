@@ -63,14 +63,26 @@ Do not introduce purple gradient themes or decorative glow aesthetics for this p
 - Data: static list in `frontend/src/data/pakistanLocations.ts` (no Maps API).
 - Users may type free text or pick a suggestion; store a single `location` string.
 - Do not introduce Google Places / Mapbox unless product explicitly requires geocoding.
-- Project **type** on Projects forms: two radios — **Residential** (default) or **Commercial**; not free text.
-- Prefer short `placeholder` hints on text/number inputs (name, plot size, budget, etc.).
+- Project create/edit uses cascading fields (not free text):
+  1. **Project Type** — Ready Property (`READY_PROPERTY`) or Land (`LAND`)
+  2. **Subtype** — filtered list for that type
+  3. **Project Strategy** — Direct Sale / Development (Ready Property locked to Direct Sale)
+- Direct Sale projects: Project Detail hides Add Stage / Default Stages and shows an explanatory banner.
+- List/cards show type + subtype + strategy badges.
+- Project list cards: progress (budget / collections) plus quick actions **+ Expense**, **+ Collection**, **+ Payment** (`ProjectQuickEntry` modal).
+- **+ Collection** modes: Installment payment vs Full / direct payment (sale picker; amount capped to balance due).
+- Prefer short `placeholder` hints on text/number inputs (name, budget, etc.).
+- **FieldLabel:** form labels include a small **(i)** tip (hover/focus) explaining the field — used on Projects create/edit and Project Detail stage/sell forms.
+- **MoneyInput:** PKR amount fields show en-PK comma grouping while storing digit-only values (`formatMoneyDisplay` / `parseMoneyInput` in `utils/money.ts`). Used for project budget, target sale, stage budgets, and sell-as-is price.
+- **Plot size:** single numeric input + unit selector (Gazz / Sq. Ft / Marla) with live **Equivalent Sizes** panel (`PlotSizeField`). Store only `plot_size_sqft`. Cards show `Plot: X Gazz · Y Sq. Ft · Z Marla` (or legacy free-text if no sqft).
+- **Settings → Measurement Standards:** Pakistan (1 Marla = 272.25 Sq Ft) or Custom Marla→Sq Ft; Gazz fixed at 9 Sq Ft. Above Danger Zone reset UI.
+- **Construction stages (DEVELOPMENT):** 11-stage template; detail timeline shows Budget, Actual Cost (from expenses), dates, completion %. **Sell Project** banner + modal (buyer/price/date) → Sold During Construction / Sold As-Is; stages lock.
 
 ## Interaction
 
 - Primary CTA: solid `bg-blue-600 text-white hover:bg-blue-700`
 - Secondary: bordered ghost buttons
-- Destructive: text or soft red buttons with confirm where data is deleted
+- Destructive: text or soft red buttons with `ConfirmDialog` (modal) before deletes; success/error feedback via Sonner toasts (`notify`), not browser `alert`/`confirm`
 - Loading: centered spinner (`animate-spin` blue ring)
 - Errors: `text-red-600 bg-red-50` inline banners
 

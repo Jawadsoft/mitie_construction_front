@@ -14,6 +14,8 @@ import type { BankAccount } from '../api/accounting';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
 import { exportCSV, exportPDF } from '../utils/exportUtils';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 const CATEGORIES = ['Land Purchase', 'Materials', 'Labour', 'Equipment Rental', 'Transport', 'Utilities', 'Administration', 'Other'];
 const DIRECT_PAYMENT_TYPES = ['Cash', 'Bank Transfer', 'Cheque'];
@@ -51,6 +53,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+  const confirm = useConfirm();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -169,8 +172,19 @@ export default function ExpensesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this expense record and its journals?')) return;
-    try { await deleteExpense(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({
+      title: 'Delete expense',
+      message: 'Delete this expense record and its journals?',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await deleteExpense(id);
+      load();
+      notify.success('Expense deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const handleExportCSV = () => {

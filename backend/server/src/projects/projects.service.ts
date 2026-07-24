@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
@@ -6,6 +6,13 @@ import { ProjectStage } from './entities/project-stage.entity';
 import { StageBudget } from './entities/stage-budget.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateStageDto } from './dto/create-stage.dto';
+import { SellDuringConstructionDto } from './dto/sell-during-construction.dto';
+import { assertProjectTaxonomy, deriveAssetClass, normalizeTaxonomyInput } from './project-taxonomy';
+import {
+  DEVELOPMENT_STAGE_TEMPLATE,
+  PROJECT_STATUSES,
+  STAGE_LOCKED_STATUSES,
+} from './construction-stages';
 
 @Injectable()
 export class ProjectsService {
@@ -20,13 +27,115 @@ export class ProjectsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  private validateTaxonomy(dto: Partial<CreateProjectDto>, requireAll: boolean) {
+    try {
+      const normalized = normalizeTaxonomyInput(dto);
+      return assertProjectTaxonomy({
+        project_type: normalized.project_type,
+        project_subtype: normalized.project_subtype,
+        project_strategy: normalized.project_strategy,
+        requireAll,
+      });
+    } catch (e: any) {
+      throw new BadRequestException(e?.message || 'Invalid project taxonomy');
+    }
+  }
+
+  private assertValidStatus(status: string | undefined) {
+    if (status === undefined) return;
+    if (!(PROJECT_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(
+        `status must be one of: ${PROJECT_STATUSES.join(', ')}`,
+      );
+    }
+  }
+
+  private assertCanManageStages(project: Project | { project_strategy?: string | null; status?: string }) {
+    if (project.project_strategy === 'DIRECT_SALE') {
+      throw new BadRequestException(
+        'DIRECT_SALE projects do not use construction stages',
+      );
+    }
+  }
+
+  private assertStagesEditable(project: Project | { status?: string; project_strategy?: string | null }) {
+    this.assertCanManageStages(project);
+    if (project.status && STAGE_LOCKED_STATUSES.has(project.status)) {
+      throw new BadRequestException(
+        `Stages cannot be edited when project status is "${project.status}"`,
+      );
+    }
+  }
+
+  private async seedDevelopmentStages(projectId: string) {
+    for (let i = 0; i < DEVELOPMENT_STAGE_TEMPLATE.length; i++) {
+      const tpl = DEVELOPMENT_STAGE_TEMPLATE[i];
+      const stage = await this.stagesRepo.save(
+        this.stagesRepo.create({
+          project_id: projectId,
+          name: tpl.name,
+          description: tpl.description,
+          sequence_order: i + 1,
+          completion_percent: '0',
+          status: 'Planned',
+        }),
+      );
+      await this.stageBudgetsRepo.save(
+        this.stageBudgetsRepo.create({
+          project_stage_id: stage.id,
+          labour_budget: '0',
+          material_budget: '0',
+          equipment_budget: '0',
+          other_budget: '0',
+          total_budget: '0',
+        }),
+      );
+    }
+  }
+
+  private async loadStageActualCosts(projectId: string): Promise<Map<string, number>> {
+    const rows: Array<{ project_stage_id: string; actual_cost: string }> =
+      await this.dataSource.query(
+        `
+        SELECT e.project_stage_id::text AS project_stage_id,
+          COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS actual_cost
+        FROM expenses e
+        WHERE e.project_id = $1 AND e.project_stage_id IS NOT NULL
+        GROUP BY e.project_stage_id
+        `,
+        [projectId],
+      );
+    return new Map(rows.map((r) => [String(r.project_stage_id), Number(r.actual_cost)]));
+  }
+
+  private attachActualCosts(
+    stages: ProjectStage[] | undefined,
+    actuals: Map<string, number>,
+  ) {
+    if (!stages) return stages;
+    return stages.map((s) => ({
+      ...s,
+      actual_cost: actuals.get(String(s.id)) ?? 0,
+    }));
+  }
+
   async findAll() {
     const projects = await this.projectsRepo.find({
       relations: ['stages', 'stages.budget'],
       order: { created_at: 'DESC' },
     });
     const financials = await this.loadProjectFinancials();
-    return projects.map((p) => this.enrichProject(p, financials.get(String(p.id))));
+    const enriched: ReturnType<ProjectsService['enrichProject']>[] = [];
+    for (const p of projects) {
+      const actuals = await this.loadStageActualCosts(String(p.id));
+      enriched.push(
+        this.enrichProject(
+          { ...p, stages: this.attachActualCosts(p.stages, actuals) as any },
+          financials.get(String(p.id)),
+        ),
+      );
+    }
+    return enriched;
   }
 
   async findOne(id: string) {
@@ -36,17 +145,43 @@ export class ProjectsService {
     });
     if (!project) throw new NotFoundException('Project not found');
     const financials = await this.loadProjectFinancials(id);
-    return this.enrichProject(project, financials.get(String(id)));
+    const actuals = await this.loadStageActualCosts(id);
+    return this.enrichProject(
+      { ...project, stages: this.attachActualCosts(project.stages, actuals) as any },
+      financials.get(String(id)),
+    );
+  }
+
+  private normalizePlotSizeSqft(value: number | string | null): string | null {
+    if (value === null || value === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new BadRequestException('plot_size_sqft must be a non-negative number');
+    }
+    return String(n);
   }
 
   async create(dto: CreateProjectDto) {
+    if (!dto.name?.trim()) throw new BadRequestException('name is required');
+    this.assertValidStatus(dto.status);
+    const tax = this.validateTaxonomy(dto, true)!;
+    const plotSizeSqft =
+      dto.plot_size_sqft !== undefined
+        ? this.normalizePlotSizeSqft(dto.plot_size_sqft)
+        : null;
     const project = this.projectsRepo.create({
-      name: dto.name,
+      name: dto.name.trim(),
       location: dto.location,
-      plot_size: dto.plot_size,
+      plot_size: plotSizeSqft != null ? null : (dto.plot_size ?? null),
+      plot_size_sqft: plotSizeSqft,
       start_date: dto.start_date,
       expected_completion_date: dto.expected_completion_date,
-      project_type: dto.project_type,
+      project_type: tax.type,
+      project_subtype: tax.subtype,
+      project_strategy: tax.strategy,
+      asset_class: deriveAssetClass(tax.subtype),
+      project_category: null,
+      project_purpose: null,
       total_estimated_budget:
         dto.total_estimated_budget != null && dto.total_estimated_budget !== ('' as unknown as number)
           ? String(dto.total_estimated_budget)
@@ -56,19 +191,50 @@ export class ProjectsService {
           ? String(dto.target_sale_price)
           : undefined,
       status: dto.status || 'Planning',
+      sold_as_is: false,
     });
-    return this.projectsRepo.save(project);
+    const saved = await this.projectsRepo.save(project);
+    if (tax.strategy === 'DEVELOPMENT') {
+      await this.seedDevelopmentStages(String(saved.id));
+    }
+    return this.findOne(String(saved.id));
   }
 
   async update(id: string, dto: Partial<CreateProjectDto>) {
+    const existing = await this.findOne(id);
+    this.assertValidStatus(dto.status);
+    const normalizedExisting = normalizeTaxonomyInput({
+      project_type: existing.project_type,
+      project_category: existing.project_category,
+      project_subtype: existing.project_subtype,
+      project_strategy: existing.project_strategy,
+      project_purpose: existing.project_purpose,
+    });
+    const normalizedDto = normalizeTaxonomyInput(dto);
+    const merged = {
+      project_type: normalizedDto.project_type ?? normalizedExisting.project_type,
+      project_subtype: normalizedDto.project_subtype ?? normalizedExisting.project_subtype,
+      project_strategy: normalizedDto.project_strategy ?? normalizedExisting.project_strategy,
+    };
+    const touchingTaxonomy =
+      dto.project_type !== undefined ||
+      dto.project_category !== undefined ||
+      dto.project_subtype !== undefined ||
+      dto.project_strategy !== undefined ||
+      dto.project_purpose !== undefined;
+
     const updateData: Partial<Project> = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.location !== undefined) updateData.location = dto.location;
-    if (dto.plot_size !== undefined) updateData.plot_size = dto.plot_size;
+    if (dto.plot_size_sqft !== undefined) {
+      updateData.plot_size_sqft = this.normalizePlotSizeSqft(dto.plot_size_sqft);
+      if (updateData.plot_size_sqft != null) updateData.plot_size = null;
+    } else if (dto.plot_size !== undefined) {
+      updateData.plot_size = dto.plot_size;
+    }
     if (dto.start_date !== undefined) updateData.start_date = dto.start_date;
     if (dto.expected_completion_date !== undefined)
       updateData.expected_completion_date = dto.expected_completion_date;
-    if (dto.project_type !== undefined) updateData.project_type = dto.project_type;
     if (dto.total_estimated_budget !== undefined)
       updateData.total_estimated_budget =
         dto.total_estimated_budget === null || dto.total_estimated_budget === ('' as unknown as number)
@@ -80,6 +246,16 @@ export class ProjectsService {
           ? null
           : String(dto.target_sale_price);
     if (dto.status !== undefined) updateData.status = dto.status;
+
+    if (touchingTaxonomy || (merged.project_type && merged.project_subtype && merged.project_strategy)) {
+      const tax = this.validateTaxonomy(merged, true)!;
+      updateData.project_type = tax.type;
+      updateData.project_subtype = tax.subtype;
+      updateData.project_strategy = tax.strategy;
+      updateData.asset_class = deriveAssetClass(tax.subtype);
+      updateData.project_category = null;
+      updateData.project_purpose = null;
+    }
 
     await this.projectsRepo.update(id, updateData);
     return this.findOne(id);
@@ -147,15 +323,59 @@ export class ProjectsService {
 
   async findStages(projectId: string) {
     await this.findOne(projectId);
-    return this.stagesRepo.find({
+    const stages = await this.stagesRepo.find({
       where: { project_id: projectId },
       relations: ['budget'],
       order: { sequence_order: 'ASC' },
     });
+    const actuals = await this.loadStageActualCosts(projectId);
+    return this.attachActualCosts(stages, actuals);
+  }
+
+  async sellDuringConstruction(id: string, dto: SellDuringConstructionDto) {
+    const project = await this.projectsRepo.findOne({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (project.project_strategy !== 'DEVELOPMENT') {
+      throw new BadRequestException('Only DEVELOPMENT projects can be sold during construction');
+    }
+    if (STAGE_LOCKED_STATUSES.has(project.status) || project.status === 'Sold') {
+      throw new BadRequestException(
+        `Cannot sell during construction when status is "${project.status}"`,
+      );
+    }
+
+    const buyer = dto.buyer_name?.trim();
+    if (!buyer) throw new BadRequestException('buyer_name is required');
+
+    let soldPrice: string | null = null;
+    if (dto.sale_price != null && dto.sale_price !== ('' as unknown as number)) {
+      const n = Number(dto.sale_price);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BadRequestException('sale_price must be a non-negative number');
+      }
+      soldPrice = String(n);
+    }
+
+    const saleDate =
+      dto.sale_date?.trim() ||
+      new Date().toISOString().slice(0, 10);
+
+    await this.projectsRepo.update(id, {
+      status: 'Sold During Construction',
+      sold_as_is: true,
+      sold_buyer_name: buyer,
+      sold_price: soldPrice,
+      sold_at: saleDate,
+      sold_notes: dto.notes?.trim() || null,
+    });
+
+    return this.findOne(id);
   }
 
   async createStage(projectId: string, dto: CreateStageDto) {
-    await this.findOne(projectId);
+    const project = await this.findOne(projectId);
+    this.assertStagesEditable(project);
     const { labour_budget, material_budget, equipment_budget, other_budget, ...stageData } = dto;
 
     const stage = this.stagesRepo.create({
@@ -193,6 +413,11 @@ export class ProjectsService {
   }
 
   async updateStage(stageId: string, dto: Partial<CreateStageDto>) {
+    const stage = await this.stagesRepo.findOne({ where: { id: stageId } });
+    if (!stage) throw new NotFoundException('Stage not found');
+    const project = await this.findOne(stage.project_id);
+    this.assertStagesEditable(project);
+
     const { labour_budget, material_budget, equipment_budget, other_budget, ...stageData } = dto;
 
     const updateData: Partial<ProjectStage> = {};

@@ -6,17 +6,26 @@ import {
 import type { FundSource, FundTransaction } from '../api/funds';
 import { getBankAccounts, createBankAccount } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
-import { getProjects, createProject } from '../api/projects';
-import type { Project } from '../api/projects';
+import {
+  getProjects,
+  createProject,
+  TYPE_LABELS,
+  SUBTYPE_LABELS,
+  STRATEGY_LABELS,
+  subtypesForType,
+} from '../api/projects';
+import type { Project, ProjectTypeCode, ProjectStrategy, ProjectSubtype } from '../api/projects';
 import Modal from '../components/Modal';
 import FundSourceNameInput from '../components/FundSourceNameInput';
 import PakistanBankNameInput from '../components/PakistanBankNameInput';
 import PakistanLocationInput from '../components/PakistanLocationInput';
 import StatCard from '../components/StatCard';
 import { amountToWordsPk, formatMoneyDisplay, parseMoneyInput } from '../utils/money';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 const SOURCE_TYPES = ['EQUITY', 'LOAN', 'INVESTOR', 'ADVANCE_SALES', 'OTHER'];
-const TYPE_LABELS: Record<string, string> = {
+const SOURCE_TYPE_LABELS: Record<string, string> = {
   EQUITY: 'Equity',
   LOAN: 'Bank Loan',
   INVESTOR: 'Investor',
@@ -61,7 +70,9 @@ const emptyBankForm = {
 const emptyProjectForm = {
   name: '',
   location: '',
-  project_type: 'Residential' as 'Residential' | 'Commercial',
+  project_type: 'READY_PROPERTY' as ProjectTypeCode,
+  project_subtype: 'ALREADY_CONSTRUCTED_HOUSE' as ProjectSubtype,
+  project_strategy: 'DIRECT_SALE' as ProjectStrategy,
   total_estimated_budget: '',
   status: 'Planning',
 };
@@ -81,6 +92,7 @@ function sourceBankLabel(s: FundSource) {
 }
 
 export default function FundsPage() {
+  const confirm = useConfirm();
   const [sources, setSources] = useState<FundSource[]>([]);
   const [transactions, setTransactions] = useState<FundTransaction[]>([]);
   const [banks, setBanks] = useState<BankAccount[]>([]);
@@ -208,22 +220,34 @@ export default function FundsPage() {
   };
 
   const handleDeleteSource = async (id: string, name: string) => {
-    if (!confirm(`Delete fund source "${name}"?\n\nThis will also delete all its receipts.`)) return;
+    const ok = await confirm({
+      title: 'Delete fund source',
+      message: `Delete fund source "${name}"?\n\nThis will also delete all its receipts.`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     try {
       await deleteFundSource(id);
       load();
+      notify.success('Fund source deleted');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete');
+      setError(notifyError(e, 'Failed to delete'));
     }
   };
 
   const handleCancelSource = async (s: FundSource) => {
-    if (!confirm(`Cancel commitment "${s.source_name}"? It will be excluded from KPI totals.`)) return;
+    const ok = await confirm({
+      title: 'Cancel commitment',
+      message: `Cancel commitment "${s.source_name}"? It will be excluded from KPI totals.`,
+      confirmLabel: 'Cancel commitment',
+    });
+    if (!ok) return;
     try {
       await updateFundSource(s.id, { status: 'Cancelled' });
       load();
+      notify.success('Commitment cancelled');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to cancel');
+      setError(notifyError(e, 'Failed to cancel'));
     }
   };
 
@@ -253,12 +277,18 @@ export default function FundsPage() {
   };
 
   const handleDeleteTx = async (id: string) => {
-    if (!confirm('Delete this receipt record?')) return;
+    const ok = await confirm({
+      title: 'Delete receipt',
+      message: 'Delete this receipt record?',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     try {
       await deleteFundTransaction(id);
       load();
+      notify.success('Receipt deleted');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete');
+      setError(notifyError(e, 'Failed to delete'));
     }
   };
 
@@ -309,6 +339,9 @@ export default function FundsPage() {
         name: projectForm.name.trim(),
         location: projectForm.location.trim() || null,
         project_type: projectForm.project_type,
+        project_subtype: projectForm.project_subtype,
+        project_strategy:
+          projectForm.project_type === 'READY_PROPERTY' ? 'DIRECT_SALE' : projectForm.project_strategy,
         total_estimated_budget: projectForm.total_estimated_budget || null,
         status: projectForm.status,
       });
@@ -386,7 +419,7 @@ export default function FundsPage() {
                     <p className="text-xs text-gray-500 mt-0.5">{sourceBankLabel(s)}</p>
                     <div className="flex flex-wrap gap-1 mt-1">
                       <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                        {TYPE_LABELS[s.source_type] ?? s.source_type}
+                        {SOURCE_TYPE_LABELS[s.source_type] ?? s.source_type}
                       </span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[status] || 'bg-gray-100 text-gray-700'}`}>
                         {STATUS_LABELS[status] ?? status}
@@ -512,7 +545,7 @@ export default function FundsPage() {
                 onChange={(e) => setSourceForm((f) => ({ ...f, source_type: e.target.value }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
               >
-                {SOURCE_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                {SOURCE_TYPES.map((t) => <option key={t} value={t}>{SOURCE_TYPE_LABELS[t]}</option>)}
               </select>
             </div>
             <div>
@@ -619,21 +652,63 @@ export default function FundsPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Project type</label>
-              <div className="flex gap-4 pt-1">
-                {(['Residential', 'Commercial'] as const).map((t) => (
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project Type *</label>
+              <div className="flex flex-wrap gap-3 pt-1">
+                {(['READY_PROPERTY', 'LAND'] as ProjectTypeCode[]).map((t) => (
                   <label key={t} className="inline-flex items-center gap-2 text-sm text-gray-700">
                     <input
                       type="radio"
                       name="fund_project_type"
-                      value={t}
                       checked={projectForm.project_type === t}
-                      onChange={() => setProjectForm((f) => ({ ...f, project_type: t }))}
+                      onChange={() => {
+                        const next = subtypesForType(t);
+                        setProjectForm((f) => ({
+                          ...f,
+                          project_type: t,
+                          project_subtype: next[0],
+                          project_strategy: t === 'READY_PROPERTY' ? 'DIRECT_SALE' : f.project_strategy,
+                        }));
+                      }}
                     />
-                    {t}
+                    {TYPE_LABELS[t]}
                   </label>
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subtype *</label>
+              <select
+                value={projectForm.project_subtype}
+                onChange={(e) => setProjectForm((f) => ({ ...f, project_subtype: e.target.value as ProjectSubtype }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                {subtypesForType(projectForm.project_type).map((s) => (
+                  <option key={s} value={s}>{SUBTYPE_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project Strategy *</label>
+              {projectForm.project_type === 'READY_PROPERTY' ? (
+                <p className="text-sm text-gray-700 pt-1">
+                  {STRATEGY_LABELS.DIRECT_SALE}{' '}
+                  <span className="text-gray-400">(no construction)</span>
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2 pt-1">
+                  {(['DIRECT_SALE', 'DEVELOPMENT'] as ProjectStrategy[]).map((s) => (
+                    <label key={s} className="inline-flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="fund_project_strategy"
+                        checked={projectForm.project_strategy === s}
+                        onChange={() => setProjectForm((f) => ({ ...f, project_strategy: s }))}
+                      />
+                      {STRATEGY_LABELS[s]}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Estimated budget (PKR)</label>

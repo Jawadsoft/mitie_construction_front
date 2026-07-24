@@ -11,6 +11,8 @@ import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
 import StatCard from '../components/StatCard';
 import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../components/DetailDrawer';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 type Tab = 'inventory' | 'sales' | 'customers' | 'receivables';
 
@@ -29,6 +31,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function SalesPage() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('inventory');
   const [units, setUnits] = useState<PropertyUnit[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -105,18 +108,43 @@ export default function SalesPage() {
   };
 
   const handleDeleteUnit = async (id: string) => {
-    if (!confirm('Delete this property unit?')) return;
-    try { await deletePropertyUnit(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({ title: 'Delete unit', message: 'Delete this property unit?', confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await deletePropertyUnit(id);
+      load();
+      notify.success('Unit deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (!confirm('Delete this customer?')) return;
-    try { await deleteCustomer(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({ title: 'Delete customer', message: 'Delete this customer?', confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await deleteCustomer(id);
+      load();
+      notify.success('Customer deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const handleDeleteSale = async (id: string) => {
-    if (!confirm('Cancel/delete this sale? This will also remove all installments.')) return;
-    try { await deleteSale(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({
+      title: 'Delete sale',
+      message: 'Cancel/delete this sale? This will also remove all installments.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await deleteSale(id);
+      load();
+      notify.success('Sale deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const handleExportReceivables = () => {

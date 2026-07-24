@@ -9,13 +9,16 @@ Agents must follow the **Commercial roadmap (P1–P5)** below for feature priori
 Master operational order (see [PRD.md](PRD.md) Lifecycle):
 
 ```text
-Funds → Land → Project → Strategy (Direct Sale | Development) → Sale → Profit
+Funds → Land → Project (READY_PROPERTY | LAND + strategy DIRECT_SALE | DEVELOPMENT) → Sale → Profit
+         (DEVELOPMENT adds construction stages; DIRECT_SALE has none)
 ```
 
 - [x] Funds as first Capital nav module; commitment status + fund dashboard KPIs
 - [x] Funds UX: commitment amount min 1,000 + commas/words; source-name + PK bank comboboxes; inline + New project / + New bank
+- [x] Project type + subtype + **project strategy** (Direct Sale / Development) on create/edit
+- [x] Stage UI/API gating by `project_strategy` (Direct Sale blocked)
 - [ ] Enforce fund allocation before land/project spend (later)
-- [ ] Project strategy: Direct Sale vs Development (later)
+- [ ] Auto-create property unit (Ready Property) / land parcel stub (Land) on project create (later)
 
 ## Commercial roadmap (P1–P5)
 
@@ -31,7 +34,7 @@ Foundation **shipped**. Deepen only — do not rebuild from scratch.
 - [x] Journal entries (balanced; Draft → Post)
 - [x] General ledger, trial balance, balance sheet
 - [x] Bank accounts, statement lines, reconciliation
-- [x] Auto-post operational events (expenses/sales) to journals — expense create, sale create, installment pay → Posted JE (`EXP-*` / `SALE-*` / `PMT-*`); fund receipts → `FUND-*`
+- [x] Auto-post operational events (expenses/sales) to journals — expense create, sale create, installment pay / sale collect → Posted JE (`EXP-*` / `SALE-*` / `PMT-*`); fund receipts → `FUND-*`
 - [x] JWT / RBAC on accounting mutating routes — Bearer + roles `Admin`, `Owner / Director`, `Accountant` on POST/PATCH
 
 ### P2 — Material Requests + approval workflow
@@ -82,6 +85,7 @@ Basic trail **shipped**. Deepen approvals next.
 - [x] Labour contractors, attendance, wages, advances, payments
 - [x] Expenses by project/stage (incl. Land Purchase category)
 - [x] Property units, customers, sales, installments
+- [x] Project-card + Collection: Installment pay + Full/Direct collect API
 - [x] Fund sources/transactions + cash transactions/summaries
 - [x] Operational reports + dashboard KPIs
 - [x] Land registry (`land_parcels`) + UI
@@ -99,7 +103,8 @@ Basic trail **shipped**. Deepen approvals next.
 ### Later / polish
 
 - [x] Pakistan location typeahead (Projects + Land) — `PakistanLocationInput`
-- [x] Project type radios (Residential / Commercial) + form placeholders
+- [x] Project type radios (Residential / Commercial) — **superseded** by type/subtype/strategy
+- [x] Project Type A/B create fields — **superseded** by `project_type` + `project_strategy`
 - [ ] Forecasting / projected cashflow
 - [ ] Mobile UX polish
 

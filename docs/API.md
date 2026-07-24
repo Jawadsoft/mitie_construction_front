@@ -40,12 +40,50 @@ Health/ping are intentionally public.
 |--------|------|---------|
 | GET | `/api/projects` | List projects |
 | GET | `/api/projects/:id` | Get project |
-| POST | `/api/projects` | Create project |
+| POST | `/api/projects` | Create project (DEVELOPMENT auto-seeds 11 stages) |
 | PATCH | `/api/projects/:id` | Update project |
+| POST | `/api/projects/:id/sell-during-construction` | Mid-construction Sold As-Is sale |
 | DELETE | `/api/projects/:id` | Delete project |
-| GET | `/api/projects/:id/stages` | List stages |
+| GET | `/api/projects/:id/stages` | List stages (includes `actual_cost`) |
 | POST | `/api/projects/:id/stages` | Create stage (+ budget fields via DTO) |
 | PATCH | `/api/projects/stages/:stageId` | Update stage |
+
+**Create/update body (type + strategy):**
+
+```json
+{
+  "name": "string (required)",
+  "project_type": "READY_PROPERTY | LAND (required on create)",
+  "project_subtype": "ALREADY_CONSTRUCTED_HOUSE | APARTMENT | COMMERCIAL_SHOP | WAREHOUSE | EMPTY_PLOT | RAW_LAND | AGRICULTURAL_LAND | COMMERCIAL_PLOT",
+  "project_strategy": "DIRECT_SALE | DEVELOPMENT",
+  "location": "string?",
+  "plot_size_sqft": "number? (canonical area in sq ft; UI converts Gazz/Marla)",
+  "plot_size": "string? (legacy free-text; cleared when plot_size_sqft is set)",
+  "start_date": "YYYY-MM-DD?",
+  "expected_completion_date": "YYYY-MM-DD?",
+  "total_estimated_budget": "number?",
+  "target_sale_price": "number?",
+  "status": "Planning|Active|On Hold|Completed|Sold|Sold During Construction|Cancelled"
+}
+```
+
+`POST /api/projects/:id/sell-during-construction` body:
+
+```json
+{
+  "buyer_name": "string (required)",
+  "sale_price": "number?",
+  "sale_date": "YYYY-MM-DD?",
+  "notes": "string?"
+}
+```
+
+Sets `status = Sold During Construction`, `sold_as_is = true`, and sale metadata. Only `DEVELOPMENT` projects; rejects locked statuses. Stages become read-only afterward.
+
+Invalid combinations (e.g. `READY_PROPERTY` + `DEVELOPMENT`, or subtype not in type) → **400**.  
+`POST/PATCH .../stages` on a `DIRECT_SALE` project → **400**.
+
+Legacy aliases `project_category` / `project_purpose` / `LAND_ONLY` / `BUY_*` are normalized server-side when present.
 
 ---
 
@@ -200,9 +238,10 @@ Static paths `summary` / `dashboard` should be registered before `:id` — verif
 | GET | `/api/sales/list` | List sales; query project/customer |
 | GET | `/api/sales/list/:id` | One sale |
 | POST | `/api/sales/list` | Create sale (**also** posts JE `SALE-{id}`: Dr 1100 AR / Cr 4000 Revenue) |
+| POST | `/api/sales/list/:id/collect` | Full/direct collection: FIFO pay open installments (+ catch-up installment if needed); body `paid_amount`, `paid_date`; posts `PMT-*` per slice; 400 if over sale balance |
 | PATCH/DELETE | `/api/sales/list/:id` | Update / delete |
 | GET | `/api/sales/installments` | List; query `sale_id`, `status` |
-| POST | `/api/sales/installments/:id/pay` | Record payment (**also** posts JE `PMT-{id}`: Dr 1000 / Cr 1100) |
+| POST | `/api/sales/installments/:id/pay` | Record installment payment (**also** posts JE `PMT-{id}`: Dr 1000 / Cr 1100); used by Installment collection mode |
 
 ---
 
@@ -223,7 +262,7 @@ Static paths `summary` / `dashboard` should be registered before `:id` — verif
 | GET | `/api/accounting/reports/trial-balance` | Query `from`, `to` |
 | GET | `/api/accounting/reports/general-ledger` | Query `account_id`, `from`, `to` |
 | GET | `/api/accounting/reports/balance-sheet` | Query `as_of` |
-| GET/POST | `/api/accounting/bank-accounts` | List / create |
+| GET/POST | `/api/accounting/bank-accounts` | List / create (create auto-adds COA child under `1000`; opening balance → posted JE) |
 | PATCH | `/api/accounting/bank-accounts/:id` | Update |
 | GET/POST | `/api/accounting/bank-accounts/:id/statements` | List / bulk create statement lines |
 | PATCH | `/api/accounting/statement-lines/:id/match` | Match line to cash/JE |
@@ -266,9 +305,11 @@ Also: `GET /` on root `AppController` (Nest hello).
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/settings/measurement` | `{ standard: 'PAKISTAN' \| 'CUSTOM', marla_sqft: number, gazz_sqft: 9 }` |
+| PATCH | `/api/settings/measurement` | Body: `{ standard, marla_sqft? }`. Pakistan forces `marla_sqft = 272.25`. Custom requires positive `marla_sqft`. |
 | POST | `/api/settings/reset` | Destructive truncate. Body: `{ mode: 'transactions' \| 'full', confirm: 'RESET' }` |
 
-Use only in local/demo. Does not wipe users / material catalog on full reset (per controller message).
+Measurement settings live in `app_settings`. Reset is local/demo only; does not wipe users / material catalog on full reset (per controller message).
 
 ---
 

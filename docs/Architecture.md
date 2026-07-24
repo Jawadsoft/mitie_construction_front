@@ -114,7 +114,31 @@ flowchart LR
 
 Goods receipt API writes stock `RECEIPT` rows in the same flow as marking the PO received.
 
-Creating an **expense**, **sale**, or **installment payment** also creates and posts a balanced journal entry (refs `EXP-*` / `SALE-*` / `PMT-*`) against seeded COA accounts.
+Creating an **expense**, **sale**, **installment payment**, or **sale collect** also creates and posts balanced journal entries (refs `EXP-*` / `SALE-*` / `PMT-*`) against seeded COA accounts.
+
+**Sale collections**
+
+- Single installment: `POST /api/sales/installments/:id/pay`
+- Full/direct on a sale: `POST /api/sales/list/:id/collect` — applies amount FIFO to open installments by `due_date`; if money remains and the sale still has balance, creates a catch-up installment and pays it in the same transaction. Rejects amounts above sale balance due. Project cards expose both modes via **+ Collection**.
+
+## Project type and strategy
+
+```mermaid
+flowchart TD
+  create[CreateProject]
+  create --> pt{project_type}
+  pt -->|READY_PROPERTY| a[subtypes]
+  pt -->|LAND| b[subtypes]
+  a --> sa[strategy DIRECT_SALE]
+  b --> sb{project_strategy}
+  sa --> sellReady[Buy Hold Sell no stages]
+  sb -->|DIRECT_SALE| sellLand[Buy Hold Sell no stages]
+  sb -->|DEVELOPMENT| stages[project_stages then sale]
+```
+
+- **Ready Property + Direct Sale** sells via `property_units` / Sales.
+- **Land + Direct Sale** flips land (parcels); no stages.
+- **Land + Development** uses construction stages then sale.
 
 ## High-level data relationships
 
@@ -143,6 +167,9 @@ erDiagram
 - Frontend clients in `frontend/src/api/*.ts` use `getAuthHeaders()` for Bearer token
 - Accounting **writes** enforce JWT + roles (`Admin`, `Owner / Director`, `Accountant`); other modules still soft on guards
 - Prefer proper HTTP status codes and explicit error messages
+- **Settings** (`settings/`): measurement standards via `app_settings` key/value (`GET`/`PATCH /api/settings/measurement`); demo data reset via `POST /api/settings/reset`
+- **Plot size:** projects store `plot_size_sqft` only; UI converts Gazz / Sq. Ft / Marla using Settings Marla factor (Gazz = 9 sq ft fixed)
+- **DEVELOPMENT stages:** auto-seeded template; mid-sale via `POST /api/projects/:id/sell-during-construction` locks stages
 
 ## Deployment
 

@@ -78,11 +78,17 @@ CREATE TABLE projects (
   name                     VARCHAR(150) NOT NULL,
   location                 VARCHAR(255) NULL,
   plot_size                VARCHAR(100) NULL,
+  plot_size_sqft           DECIMAL(14,4) NULL,
   start_date               DATE NULL,
   expected_completion_date DATE NULL,
   project_type             VARCHAR(100) NULL,
   total_estimated_budget   DECIMAL(18,2) NULL,
   status                   VARCHAR(50) NOT NULL DEFAULT 'Planning',
+  sold_as_is               TINYINT(1) NOT NULL DEFAULT 0,
+  sold_at                  DATE NULL,
+  sold_price               DECIMAL(18,2) NULL,
+  sold_buyer_name          VARCHAR(150) NULL,
+  sold_notes               TEXT NULL,
   created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -460,6 +466,16 @@ CREATE TABLE journal_entry_lines (
     FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id),
   CONSTRAINT fk_journal_entry_lines_account
     FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------
+-- App settings (key/value JSON)
+-- -----------------------------------------------------
+
+CREATE TABLE app_settings (
+  `key`       VARCHAR(100) NOT NULL PRIMARY KEY,
+  value       JSON NOT NULL,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------

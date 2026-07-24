@@ -17,9 +17,14 @@ export class SalesController {
   @Patch('units/:id') updateUnit(@Param('id') id: string, @Body() dto: any) { return this.svc.updateUnit(id, dto); }
   @Delete('units/:id') deleteUnit(@Param('id') id: string) { return this.svc.deleteUnit(id); }
 
-  @Get('list') findSales(@Query('project_id') project_id?: string, @Query('customer_id') customer_id?: string) { return this.svc.findSales(project_id, customer_id); }
+  @Get('list') findSales(@Query('project_id') project_id?: string, @Query('customer_id') customer_id?: string) {
+    return this.svc.findSales(project_id, customer_id);
+  }
   @Get('list/:id') findOneSale(@Param('id') id: string) { return this.svc.findOneSale(id); }
   @Post('list') createSale(@Body() dto: any) { return this.svc.createSale(dto); }
+  @Post('list/:id/collect') collectOnSale(@Param('id') id: string, @Body() dto: any) {
+    return this.svc.collectOnSale(id, dto);
+  }
   @Patch('list/:id') updateSale(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSale(id, dto); }
   @Delete('list/:id') deleteSale(@Param('id') id: string) { return this.svc.deleteSale(id); }
 

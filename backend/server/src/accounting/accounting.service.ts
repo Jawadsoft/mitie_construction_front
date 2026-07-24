@@ -46,6 +46,119 @@ export class AccountingService implements OnModuleInit {
         await this.accountsRepo.save(this.accountsRepo.create(acc));
       }
     }
+    await this.ensureBankCoaSubAccounts();
+  }
+
+  /** Next free code in 1001–1099 for Cash & Bank children. */
+  private async nextCashBankChildCode(manager?: EntityManager): Promise<string> {
+    const repo = manager ? manager.getRepository(Account) : this.accountsRepo;
+    const rows = await repo
+      .createQueryBuilder('a')
+      .where(`a.code LIKE :pfx`, { pfx: '10%' })
+      .andWhere(`LENGTH(a.code) = 4`)
+      .andWhere(`a.code <> '1000'`)
+      .getMany();
+    const used = new Set(rows.map((r) => r.code));
+    for (let n = 1001; n <= 1099; n += 1) {
+      const code = String(n);
+      if (!used.has(code)) return code;
+    }
+    throw new BadRequestException('No free Cash & Bank sub-account codes (1001–1099)');
+  }
+
+  private bankCoaDisplayName(dto: Partial<BankAccount>): string {
+    const name = (dto.name || '').trim();
+    const bank = (dto.bank_name || '').trim();
+    if (bank && name && bank.toLowerCase() !== name.toLowerCase()) {
+      return `${bank} — ${name}`;
+    }
+    return name || bank || 'Bank Account';
+  }
+
+  /**
+   * Create a COA ASSET under 1000 Cash & Bank for a partner bank.
+   * Parent 1000 stays a header; postings go to the child.
+   */
+  private async createCashBankSubAccount(
+    dto: Partial<BankAccount>,
+    manager?: EntityManager,
+  ): Promise<Account> {
+    const repo = manager ? manager.getRepository(Account) : this.accountsRepo;
+    const cash = await this.findAccountByCode('1000', manager);
+    const code = await this.nextCashBankChildCode(manager);
+    return repo.save(
+      repo.create({
+        code,
+        name: this.bankCoaDisplayName(dto),
+        type: 'ASSET',
+        is_active: true,
+        parent_account_id: cash.id,
+      }),
+    );
+  }
+
+  private async postBankOpeningBalance(
+    bank: BankAccount,
+    accountId: string,
+    manager?: EntityManager,
+  ) {
+    const opening = Number(bank.opening_balance || 0);
+    if (!(opening > 0)) return null;
+    const ref = `BANK-OPEN-${bank.id}`;
+    const jeRepo = manager ? manager.getRepository(JournalEntry) : this.jeRepo;
+    const existing = await jeRepo.findOne({ where: { reference_no: ref } });
+    if (existing) return existing;
+    const equity = await this.findAccountByCode('3000', manager);
+    const amount = opening.toFixed(2);
+    return this.createAndPostEntry(
+      {
+        entry: {
+          entry_date: new Date().toISOString().slice(0, 10),
+          reference_no: ref,
+          description: `Opening balance: ${bank.name}`,
+        },
+        lines: [
+          {
+            account_id: accountId,
+            dr_cr: 'DEBIT',
+            amount,
+            narration: 'Opening bank balance',
+          },
+          {
+            account_id: equity.id,
+            dr_cr: 'CREDIT',
+            amount,
+            narration: 'Opening equity',
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  /** Migrate banks that still point at parent 1000 (or null) onto their own sub-accounts. */
+  private async ensureBankCoaSubAccounts() {
+    const cash = await this.findAccountByCode('1000');
+    const banks = await this.bankRepo.find();
+    for (const bank of banks) {
+      try {
+        if (bank.account_id && bank.account_id !== cash.id) {
+          const linked = await this.accountsRepo.findOne({ where: { id: bank.account_id } });
+          if (linked && !linked.parent_account_id) {
+            await this.accountsRepo.update(linked.id, { parent_account_id: cash.id });
+          }
+          continue;
+        }
+        await this.dataSource.transaction(async (manager) => {
+          const sub = await this.createCashBankSubAccount(bank, manager);
+          await manager.getRepository(BankAccount).update(bank.id, { account_id: sub.id });
+          const refreshed = { ...bank, account_id: sub.id };
+          await this.postBankOpeningBalance(refreshed, sub.id, manager);
+        });
+      } catch (err) {
+        console.error(`ensureBankCoaSubAccounts failed for bank ${bank.id}:`, err);
+      }
+    }
   }
 
   findAccounts() {
@@ -340,13 +453,25 @@ export class AccountingService implements OnModuleInit {
     );
   }
 
-  /** Resolve Cash & Bank COA head for a partner bank (linked account_id or default 1000). */
+  /**
+   * Resolve GL cash/bank asset for a partner bank.
+   * Uses the bank's linked COA sub-account (under 1000). Falls back to parent 1000
+   * only when no bank is specified (e.g. pure cash).
+   */
   async resolveBankAssetAccountId(bankAccountId: string | null | undefined, manager?: EntityManager) {
     const cashDefault = await this.findAccountByCode('1000', manager);
     if (!bankAccountId) return cashDefault.id;
     const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
     const bank = await bankRepo.findOne({ where: { id: bankAccountId } });
-    if (bank?.account_id) return bank.account_id;
+    if (bank?.account_id && bank.account_id !== cashDefault.id) {
+      return bank.account_id;
+    }
+    // Legacy / mid-flight: ensure a sub-account exists then use it
+    if (bank) {
+      const sub = await this.createCashBankSubAccount(bank, manager);
+      await bankRepo.update(bank.id, { account_id: sub.id });
+      return sub.id;
+    }
     return cashDefault.id;
   }
 
@@ -380,6 +505,13 @@ export class AccountingService implements OnModuleInit {
     const debitAccountId = await this.resolveBankAssetAccountId(meta.bank_account_id, manager);
     const creditAcc = await this.findAccountByCode(this.mapFundCreditAccountCode(meta.source_type), manager);
     const amount = Number(meta.amount).toFixed(2);
+    const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+    const bank = meta.bank_account_id
+      ? await bankRepo.findOne({ where: { id: meta.bank_account_id } })
+      : null;
+    const debitNarration = bank
+      ? `Bank: ${bank.bank_name || bank.name}`
+      : 'Cash & Bank';
     return this.createAndPostEntry(
       {
         entry: {
@@ -389,7 +521,7 @@ export class AccountingService implements OnModuleInit {
           project_id: meta.project_id || null,
         },
         lines: [
-          { account_id: debitAccountId, dr_cr: 'DEBIT', amount, narration: 'Cash & Bank' },
+          { account_id: debitAccountId, dr_cr: 'DEBIT', amount, narration: debitNarration },
           { account_id: creditAcc.id, dr_cr: 'CREDIT', amount, narration: meta.source_type },
         ],
       },
@@ -501,19 +633,54 @@ export class AccountingService implements OnModuleInit {
   }
 
   async createBankAccount(dto: Partial<BankAccount>) {
-    let account_id = dto.account_id || null;
-    if (!account_id) {
-      const cash = await this.findAccountByCode('1000');
-      account_id = cash.id;
+    const displayName = dto.name?.trim();
+    if (!displayName) {
+      throw new BadRequestException('Bank display name is required');
     }
-    return this.bankRepo.save(this.bankRepo.create({ ...dto, account_id }));
+    return this.dataSource.transaction(async (manager) => {
+      const cash = await this.findAccountByCode('1000', manager);
+      let account_id = dto.account_id || null;
+
+      // Explicit link to a non-parent asset is allowed; otherwise create under 1000.
+      const useExplicit =
+        account_id &&
+        account_id !== cash.id &&
+        (await manager.getRepository(Account).findOne({ where: { id: account_id } }));
+
+      if (!useExplicit) {
+        const sub = await this.createCashBankSubAccount({ ...dto, name: displayName }, manager);
+        account_id = sub.id;
+      } else if (useExplicit && !useExplicit.parent_account_id) {
+        await manager.getRepository(Account).update(useExplicit.id, {
+          parent_account_id: cash.id,
+        });
+      }
+
+      const bank = await manager.getRepository(BankAccount).save(
+        manager.getRepository(BankAccount).create({
+          ...dto,
+          name: displayName,
+          account_id,
+          opening_balance: dto.opening_balance ?? '0',
+        }),
+      );
+
+      await this.postBankOpeningBalance(bank, account_id!, manager);
+      return bank;
+    });
   }
 
   async updateBankAccount(id: string, dto: Partial<BankAccount>) {
     const row = await this.bankRepo.findOne({ where: { id } });
     if (!row) throw new NotFoundException('Bank account not found');
     await this.bankRepo.update(id, dto);
-    return this.bankRepo.findOne({ where: { id } });
+    const updated = await this.bankRepo.findOne({ where: { id } });
+    if (updated?.account_id && (dto.name !== undefined || dto.bank_name !== undefined)) {
+      await this.accountsRepo.update(updated.account_id, {
+        name: this.bankCoaDisplayName(updated),
+      });
+    }
+    return updated;
   }
 
   getStatementLines(bank_account_id: string) {

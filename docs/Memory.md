@@ -4,16 +4,19 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## Completed
 
+- Construction stages: 11-stage DEVELOPMENT template auto-seeded on create; stage `actual_cost` from expenses; Sell Project mid-construction (`POST .../sell-during-construction`) → Sold As-Is + status Sold During Construction + stage lock; statuses include Cancelled
+- Plot size converter: `plot_size_sqft` canonical storage; `PlotSizeField` (size + Gazz/Sq Ft/Marla) with live equivalents; Settings → Measurement Standards (`app_settings`, Pakistan 272.25 or custom Marla); project cards show converted sizes
 - Funds UX polish: Total Committed min PKR 1,000 + comma display + amount-in-words (`utils/money.ts`); Source Name combobox; Add Bank PK bank list (`pakistanBanks` / `PakistanBankNameInput`); + New project on commitment form; opening balance omitted on Funds quick-add bank (defaults 0)
 - Funds-as-first-module: Capital nav; commitment status (Committed / Partial / Fully / Cancelled); KPIs (Pending, Investors, Loan, Owner Capital); Guide + PRD lifecycle updated
 - Expenses: Direct vs Bill; Pay from partner bank (Bank Transfer/Cheque); bill pay → `EXPPMT-*`; delete cleans EXP/EXPPMT journals
 - Deleting expense / fund receipt / sale now removes matching auto JE (`EXP-*` / `FUND-*` / `SALE-*`+`PMT-*`); Accounting has Delete + Clean orphan JEs
-- Projects: `target_sale_price`; list cards show budget used + sale collections (+ fund receipts when linked); quick +Expense / +Collection / +Payment on cards
-- Fund receipts auto-post JE (`FUND-*`) to bank COA / Cash & Bank; banks default-link to `1000`; COA seed `2200` Customer Advances
+- Projects: `target_sale_price`; list cards show budget used + sale collections (+ fund receipts when linked); quick +Expense / +Collection (Installment vs Full/Direct via `POST /api/sales/list/:id/collect`) / +Payment on cards
+- Fund receipts auto-post JE (`FUND-*`) to each bank’s COA sub-account under `1000` Cash & Bank (not the parent alone); banks auto-create children `1001+` on create; opening balance posts `BANK-OPEN-*` (Dr bank / Cr `3000`)
 - Funds: inject sources by partner bank (`bank_account_id` → `bank_accounts`) instead of project; UI bank selector on Funds page
-- Projects form: project type radios (Residential default / Commercial) + input placeholders
+- Projects form: **Project Strategy** — `project_type` READY_PROPERTY|LAND + `project_subtype` + `project_strategy` DIRECT_SALE|DEVELOPMENT; Direct Sale blocks stages
+- Projects form: Type A/B category/purpose naming retired in favor of type/strategy
 - Pakistan location typeahead: `pakistanLocations.ts` + `PakistanLocationInput`; wired on Projects create/edit and Land parcels
-- P1 deepen: auto-post journals on expense create / sale create / installment pay (`EXP-*`, `SALE-*`, `PMT-*`); transactional with ops rows
+- P1 deepen: auto-post journals on expense create / sale create / installment pay / sale collect (`EXP-*`, `SALE-*`, `PMT-*`); transactional with ops rows
 - P1 deepen: JWT + RolesGuard on accounting POST/PATCH (`Admin`, `Owner / Director`, `Accountant`); `JWT_SECRET` env with local fallback
 - Encoded commercial priorities P1–P5 into docs (Tasks source of truth; Phases 9–11; PRD/Rules/Memory/scope/README pointers)
 - Docs relocated to `docs/`; added Decisions, Database, API, Tasks + index
@@ -29,7 +32,7 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## In Progress
 
-- Local verification of auto-post JEs and accounting write 401/403 by role
+- None (Project Strategy + stage gating shipped)
 
 **Current focus:** P2 deepen next (multi-level MR approvals) per [Tasks.md](Tasks.md).
 
@@ -49,7 +52,7 @@ Parallel (do not block P3+):
 
 ## Last update
 
-23 July 2026
+24 July 2026 — Project Strategy (Direct Sale vs Development) + stage gating
 
 ## Session ritual
 

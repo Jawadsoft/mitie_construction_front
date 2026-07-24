@@ -7,6 +7,8 @@ import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
 import { getAuthHeaders } from '../api/client';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 type Tab = 'contractors' | 'attendance' | 'payments' | 'wages' | 'advances';
 
@@ -14,6 +16,7 @@ interface WageRow { contractor_id: string; contractor_name: string; daily_rate: 
 interface AdvanceRow { id: string; contractor_id: string; project_id: string; advance_date: string; amount: string; recovered_amount: string; notes: string | null; contractor?: LabourContractor; }
 
 export default function LabourPage() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('contractors');
   const [contractors, setContractors] = useState<LabourContractor[]>([]);
   const [attendance, setAttendance] = useState<LabourAttendance[]>([]);
@@ -130,18 +133,39 @@ export default function LabourPage() {
   });
 
   const handleDeleteContractor = async (id: string) => {
-    if (!confirm('Delete this contractor?')) return;
-    await deleteContractor(id); loadAll();
+    const ok = await confirm({ title: 'Delete contractor', message: 'Delete this contractor?', confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await deleteContractor(id);
+      loadAll();
+      notify.success('Contractor deleted');
+    } catch (e: unknown) {
+      notifyError(e);
+    }
   };
 
   const handleDeleteAttendance = async (id: string) => {
-    if (!confirm('Delete this attendance record?')) return;
-    await deleteAttendance(id); loadAll();
+    const ok = await confirm({ title: 'Delete attendance', message: 'Delete this attendance record?', confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await deleteAttendance(id);
+      loadAll();
+      notify.success('Attendance deleted');
+    } catch (e: unknown) {
+      notifyError(e);
+    }
   };
 
   const handleDeletePayment = async (id: string) => {
-    if (!confirm('Delete this payment record?')) return;
-    await deletePayment(id); loadAll();
+    const ok = await confirm({ title: 'Delete payment', message: 'Delete this payment record?', confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await deletePayment(id);
+      loadAll();
+      notify.success('Payment deleted');
+    } catch (e: unknown) {
+      notifyError(e);
+    }
   };
 
   const handleExportPaymentsCSV = () => {

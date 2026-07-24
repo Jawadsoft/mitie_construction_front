@@ -122,6 +122,7 @@ Per-stage: budget vs actual, labour/material/equipment/overhead, dates, completi
 
 - Units: Available, Reserved, Sold
 - Customers, bookings, installments
+- Collections from project cards: installment payment or full/direct sale collect (FIFO + journals)
 
 ### 10. Cashflow & Finance
 

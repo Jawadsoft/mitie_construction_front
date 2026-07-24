@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 interface Props {
   open: boolean;
@@ -11,6 +12,8 @@ interface Props {
 }
 
 export default function DetailDrawer({ open, title, subtitle, onClose, children, loading }: Props) {
+  useBodyScrollLock(open);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     if (open) document.addEventListener('keydown', handler);

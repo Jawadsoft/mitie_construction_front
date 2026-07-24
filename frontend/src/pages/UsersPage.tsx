@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react';
 import { getUsers, getRoles, createUser, updateUser, deactivateUser } from '../api/users';
 import type { User, Role } from '../api/users';
 import Modal from '../components/Modal';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 export default function UsersPage() {
+  const confirm = useConfirm();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -57,9 +60,19 @@ export default function UsersPage() {
   };
 
   const handleDeactivate = async (u: User) => {
-    if (!confirm(`Deactivate ${u.name}?`)) return;
-    await deactivateUser(u.id);
-    load();
+    const ok = await confirm({
+      title: 'Deactivate user',
+      message: `Deactivate ${u.name}?`,
+      confirmLabel: 'Deactivate',
+    });
+    if (!ok) return;
+    try {
+      await deactivateUser(u.id);
+      load();
+      notify.success(`${u.name} deactivated`);
+    } catch (e: unknown) {
+      setError(notifyError(e));
+    }
   };
 
   const filtered = users.filter(u =>

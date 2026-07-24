@@ -5,6 +5,8 @@ import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
 import PakistanLocationInput from '../components/PakistanLocationInput';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 const STATUSES = ['Owned', 'UnderTransfer', 'Disputed', 'SoldOnward'];
 
@@ -31,6 +33,7 @@ const emptyForm: Partial<LandParcel> = {
 };
 
 export default function LandPage() {
+  const confirm = useConfirm();
   const [parcels, setParcels] = useState<LandParcel[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,8 +90,19 @@ export default function LandPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this land parcel record?')) return;
-    try { await deleteLandParcel(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({
+      title: 'Delete land parcel',
+      message: 'Delete this land parcel record?',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await deleteLandParcel(id);
+      load();
+      notify.success('Land parcel deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   return (

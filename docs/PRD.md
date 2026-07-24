@@ -42,28 +42,43 @@ everything required for the construction-to-sale flow is handled inside one ERP 
 ```text
 Funds (commit + receive capital)
      ↓
-Land / Property Acquisition
+Land / Property Acquisition (as needed)
      ↓
 Project Creation
+     ├─ project_type READY_PROPERTY → strategy DIRECT_SALE only
+     │       Buy → Hold → Sell (no construction stages)
+     │
+     └─ project_type LAND
+            ├─ DIRECT_SALE → Buy → Hold → Sell (no stages)
+            └─ DEVELOPMENT → Buy → Planning → Construction → Sale (stages)
      ↓
-Choose Project Strategy
-     ├─ Direct Sale
-     └─ Development (Construction)
-            ↓
-       Construction Stages
-            ↓
-       Sale Anytime
-            ↓
-       Profit Calculation
+Sale → Profit
 ```
 
 **Product journey:** Capital → Funds is the first operational module. Project funding should come from fund commitments and receipts.
+
+### Project type, subtype, and strategy (required on create)
+
+| Field | Values |
+|-------|--------|
+| `project_type` | `READY_PROPERTY` \| `LAND` |
+| `project_subtype` | Ready: House, Apartment, Commercial Shop, Warehouse. Land: Empty Plot, Raw Land, Agricultural Land, Commercial Plot |
+| `project_strategy` | `DIRECT_SALE` \| `DEVELOPMENT` |
+
+**Rules**
+
+- Ready Property → strategy locked to **Direct Sale** (Buy → Hold → Sell; no stages).
+- Land → Direct Sale or Development.
+- Direct Sale → construction stages disabled (API + UI).
+- Development → stage management enabled.
+- Ready inventory sold via **property units**; land title via **land parcels**.
+- `asset_class` (Residential / Commercial / Land) is derived from subtype for compatibility.
 
 ## Target users (roles)
 
 | Role | Typical use |
 |------|-------------|
-| Admin | Users, settings, full access |
+| Admin | Users, settings (measurement standards + data reset), full access |
 | Owner / Director | Dashboards, funds, profit, high-level oversight |
 | Project Manager | Projects, stages, budgets, approvals |
 | Site Engineer | Material requests, stage progress |
@@ -84,9 +99,15 @@ Choose Project Strategy
 ### Projects and stages
 
 - Create/manage projects (status, budget, location, plot size, dates)
-- `project_type` is **Residential** or **Commercial** (UI radios; default Residential)
+- Plot size: enter once in Gazz, Sq. Ft, or Marla; system stores `plot_size_sqft` and shows live equivalents (Marla factor from Settings)
+- Statuses: Planning, Active, On Hold, Completed, Sold, Sold During Construction, Cancelled
+- Required on create: `project_type`, `project_subtype`, `project_strategy`
+- Cascading UI: Type → Subtype → Strategy (Ready Property strategy locked to Direct Sale)
 - Location entry via Pakistan city/area typeahead (`PakistanLocationInput`); free text still allowed
-- Construction stages with sequence, % complete, stage budgets
+- Construction stages only for `DEVELOPMENT` strategy (Direct Sale blocks stage create)
+- DEVELOPMENT create auto-seeds 11 stages (Land Purchase → … → Ready For Sale)
+- Stage detail: budget, actual cost (expense rollup), dates, completion %
+- **Sell Project** mid-construction: Sold As-Is → status Sold During Construction; stage edits locked
 
 ### Land registry
 
@@ -120,17 +141,20 @@ Site Engineer → Material Request → Approval → Purchase Order
 ### Expenses and funds
 
 - Project/stage expenses by category — **Direct** (cash/bank) or **Bill** (AP accrual) with later Pay
-- **Funds (first step):** commitments linked to partner banks; receipts auto-post to Cash & Bank
+- **Funds (first step):** commitments linked to partner banks; receipts auto-post to each bank’s Cash & Bank **sub-account** (journal + trial balance)
 - Commitment statuses: `Committed` → `Partially_Received` → `Fully_Received` (or `Cancelled`)
 - Fund dashboard KPIs: Total Committed / Received / Pending; Investor count; Loan amount; Owner capital (equity)
 - Commitment form UX: Source Name combobox; Total Committed min PKR 1,000 with comma formatting + amount in words; optional project link with inline create
 - Quick-add partner bank: major PK banks combobox (HBL, NBP, UBL, …) + Other; opening balance defaults to 0 (set under Accounting if needed)
 - Optional link of fund source to project for card rollups; project funding should originate from Funds
 - Project file: budget + target sale price; card shows spent / collected progress
+- Project cards: quick **+ Expense**, **+ Collection**, **+ Payment**
+  - **+ Collection:** Installment payment (single open installment) or Full/Direct (lump sum on a sale; FIFO across installments, catch-up installment if needed)
 
 ### Sales
 
 - Property units, customers, sales, installments
+- Collections: pay one installment, or full/direct collect against the sale (updates `total_paid`, installment statuses, and posts `PMT-*` journals)
 
 ### Cashflow
 

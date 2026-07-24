@@ -7,7 +7,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        // Use 127.0.0.1 — on Windows `localhost` can resolve to ::1 while Nest listens on IPv4
+        target: 'http://127.0.0.1:4000',
         changeOrigin: true,
       },
     },

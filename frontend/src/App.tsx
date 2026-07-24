@@ -19,6 +19,7 @@ import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
 import GuidePage from './pages/GuidePage'
 import LandPage from './pages/LandPage'
+import { useBodyScrollLock } from './hooks/useBodyScrollLock'
 
 type Page =
   | 'login' | 'dashboard' | 'projects' | 'project-detail' | 'land'
@@ -90,6 +91,8 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+
+  useBodyScrollLock(drawerOpen)
 
   useEffect(() => {
     const hasToken = !!localStorage.getItem('token')

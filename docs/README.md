@@ -4,6 +4,8 @@ Construction ERP project docs. Active stack: **React + Vite** (`frontend/`) and 
 
 **Commercial build order:** P1–P5 in [Tasks.md](Tasks.md) (Accounting deepen → MR approvals → BOQ → Equipment → Documents). Agents must follow that order for feature work and keep these docs updated.
 
+**Project lifecycle:** Funds → Project (`READY_PROPERTY` or `LAND`) with strategy **Direct Sale** or **Development** → Sale → Profit. See [PRD.md](PRD.md).
+
 | Doc | Purpose |
 |-----|---------|
 | [PRD.md](PRD.md) | Product requirements and lifecycle |

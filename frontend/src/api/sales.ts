@@ -162,6 +162,29 @@ export async function recordPayment(installment_id: string, paid_amount: string,
     method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ paid_amount, paid_date }),
   });
-  if (!res.ok) throw new Error('Failed to record payment');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || 'Failed to record payment');
+  }
+  return res.json();
+}
+
+/** Full/direct collection against a sale (FIFO installments + catch-up if needed). */
+export async function collectSalePayment(
+  saleId: string,
+  paid_amount: string,
+  paid_date: string,
+): Promise<Sale> {
+  const res = await fetch(`${BASE}/list/${saleId}/collect`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paid_amount, paid_date }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      Array.isArray(body.message) ? body.message.join(', ') : body.message || 'Failed to record collection',
+    );
+  }
   return res.json();
 }

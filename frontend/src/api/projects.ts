@@ -9,17 +9,111 @@ function authHeaders() {
   };
 }
 
+export type ProjectTypeCode = 'READY_PROPERTY' | 'LAND';
+export type ProjectStrategy = 'DIRECT_SALE' | 'DEVELOPMENT';
+
+export const READY_PROPERTY_SUBTYPES = [
+  'ALREADY_CONSTRUCTED_HOUSE',
+  'APARTMENT',
+  'COMMERCIAL_SHOP',
+  'WAREHOUSE',
+] as const;
+
+export const LAND_SUBTYPES = [
+  'EMPTY_PLOT',
+  'RAW_LAND',
+  'AGRICULTURAL_LAND',
+  'COMMERCIAL_PLOT',
+] as const;
+
+export type ProjectSubtype =
+  | (typeof READY_PROPERTY_SUBTYPES)[number]
+  | (typeof LAND_SUBTYPES)[number];
+
+export const TYPE_LABELS: Record<ProjectTypeCode, string> = {
+  READY_PROPERTY: 'Ready Property',
+  LAND: 'Land',
+};
+
+export const SUBTYPE_LABELS: Record<ProjectSubtype, string> = {
+  ALREADY_CONSTRUCTED_HOUSE: 'Already Constructed House',
+  APARTMENT: 'Apartment',
+  COMMERCIAL_SHOP: 'Commercial Shop',
+  WAREHOUSE: 'Warehouse',
+  EMPTY_PLOT: 'Empty Plot',
+  RAW_LAND: 'Raw Land',
+  AGRICULTURAL_LAND: 'Agricultural Land',
+  COMMERCIAL_PLOT: 'Commercial Plot',
+};
+
+export const STRATEGY_LABELS: Record<ProjectStrategy, string> = {
+  DIRECT_SALE: 'Direct Sale',
+  DEVELOPMENT: 'Development',
+};
+
+export function subtypesForType(type: ProjectTypeCode): ProjectSubtype[] {
+  return type === 'READY_PROPERTY' ? [...READY_PROPERTY_SUBTYPES] : [...LAND_SUBTYPES];
+}
+
+/** Normalize rows that may still have legacy category/purpose fields. */
+export function normalizeProjectFields(p: Partial<Project>): {
+  project_type: ProjectTypeCode | null;
+  project_subtype: ProjectSubtype | string | null;
+  project_strategy: ProjectStrategy | null;
+} {
+  let project_type = p.project_type as string | null | undefined;
+  if (project_type === 'LAND_ONLY') project_type = 'LAND';
+  if (
+    project_type !== 'READY_PROPERTY' &&
+    project_type !== 'LAND' &&
+    (p as any).project_category
+  ) {
+    const c = (p as any).project_category;
+    project_type = c === 'LAND_ONLY' || c === 'LAND' ? 'LAND' : c === 'READY_PROPERTY' ? 'READY_PROPERTY' : null;
+  }
+  if (project_type !== 'READY_PROPERTY' && project_type !== 'LAND') project_type = null;
+
+  let project_strategy = p.project_strategy as string | null | undefined;
+  if (!project_strategy && (p as any).project_purpose) {
+    const purp = (p as any).project_purpose;
+    if (purp === 'BUY_SELL') project_strategy = 'DIRECT_SALE';
+    else if (purp === 'BUY_DEVELOP') project_strategy = 'DEVELOPMENT';
+  }
+  if (project_strategy !== 'DIRECT_SALE' && project_strategy !== 'DEVELOPMENT') {
+    project_strategy = null;
+  }
+
+  return {
+    project_type: project_type as ProjectTypeCode | null,
+    project_subtype: p.project_subtype ?? null,
+    project_strategy: project_strategy as ProjectStrategy | null,
+  };
+}
+
 export interface Project {
   id: string;
   name: string;
   location: string | null;
+  /** Legacy free-text plot size */
   plot_size: string | null;
+  /** Canonical area in square feet */
+  plot_size_sqft: string | number | null;
   start_date: string | null;
   expected_completion_date: string | null;
-  project_type: string | null;
+  project_type: ProjectTypeCode | string | null;
+  project_subtype: ProjectSubtype | string | null;
+  project_strategy: ProjectStrategy | string | null;
+  asset_class?: string | null;
+  project_category?: string | null;
+  project_purpose?: string | null;
   total_estimated_budget: string | null;
   target_sale_price: string | null;
   status: string;
+  sold_as_is?: boolean;
+  sold_at?: string | null;
+  sold_price?: string | number | null;
+  sold_buyer_name?: string | null;
+  sold_notes?: string | null;
   stages?: Stage[];
   computed?: {
     total_stage_budget: number;
@@ -44,6 +138,7 @@ export interface Stage {
   end_date: string | null;
   completion_percent: string;
   status: string;
+  actual_cost?: number;
   budget?: {
     labour_budget: string;
     material_budget: string;
@@ -51,6 +146,15 @@ export interface Stage {
     other_budget: string;
     total_budget: string;
   };
+}
+
+async function readError(res: Response, fallback: string) {
+  try {
+    const data = await res.json();
+    if (Array.isArray(data?.message)) return data.message.join(', ');
+    if (typeof data?.message === 'string') return data.message;
+  } catch { /* ignore */ }
+  return fallback;
 }
 
 export async function getProjects(): Promise<Project[]> {
@@ -71,7 +175,7 @@ export async function createProject(data: Partial<Project>): Promise<Project> {
     headers: authHeaders(),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to create project');
+  if (!res.ok) throw new Error(await readError(res, 'Failed to create project'));
   return res.json();
 }
 
@@ -81,7 +185,7 @@ export async function updateProject(id: string, data: Partial<Project>): Promise
     headers: authHeaders(),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to update project');
+  if (!res.ok) throw new Error(await readError(res, 'Failed to update project'));
   return res.json();
 }
 
@@ -90,35 +194,46 @@ export async function deleteProject(id: string): Promise<void> {
     method: 'DELETE',
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error('Failed to delete project');
+  if (!res.ok) throw new Error(await readError(res, 'Failed to delete project'));
 }
 
-export async function createStage(projectId: string, data: Partial<Stage> & {
-  labour_budget?: number;
-  material_budget?: number;
-  equipment_budget?: number;
-  other_budget?: number;
-}): Promise<Stage> {
+export async function sellProjectDuringConstruction(
+  id: string,
+  data: {
+    buyer_name: string;
+    sale_price?: number | null;
+    sale_date?: string | null;
+    notes?: string | null;
+  },
+): Promise<Project> {
+  const res = await fetch(`${API}/api/projects/${id}/sell-during-construction`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to sell project during construction'));
+  return res.json();
+}
+
+export async function createStage(
+  projectId: string,
+  data: Partial<Stage> & Record<string, unknown>,
+): Promise<Stage> {
   const res = await fetch(`${API}/api/projects/${projectId}/stages`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to create stage');
+  if (!res.ok) throw new Error(await readError(res, 'Failed to create stage'));
   return res.json();
 }
 
-export async function updateStage(stageId: string, data: Partial<Stage> & {
-  labour_budget?: number;
-  material_budget?: number;
-  equipment_budget?: number;
-  other_budget?: number;
-}): Promise<Stage> {
+export async function updateStage(stageId: string, data: Partial<Stage> & Record<string, unknown>): Promise<Stage> {
   const res = await fetch(`${API}/api/projects/stages/${stageId}`, {
     method: 'PATCH',
     headers: authHeaders(),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to update stage');
+  if (!res.ok) throw new Error(await readError(res, 'Failed to update stage'));
   return res.json();
 }

@@ -86,10 +86,10 @@ Manage all construction projects.
 
 - Project Name
 - Location
-- Plot Size
+- Plot Size (one input + unit: Gazz / Sq. Ft / Marla; live equivalents; stored as sq ft; Marla factor from Settings → Measurement Standards)
 - Start Date
 - Expected Completion
-- Project Type
+- Project Type / Subtype / Strategy (Ready Property or Land; Direct Sale vs Development — see docs/PRD.md)
 - Total Estimated Budget
 - Project Status
 
@@ -100,6 +100,8 @@ Manage all construction projects.
 - On Hold
 - Completed
 - Sold
+- Sold During Construction
+- Cancelled
 
 ---
 
@@ -107,23 +109,21 @@ Manage all construction projects.
 
 Tracks the progress of construction work.
 
-### Example Stages
+### Standard Stages (DEVELOPMENT)
 
 - Land Purchase
-- Design & Approvals
+- Design
+- Approval
 - Excavation
 - Foundation
-- Structure / Grey Work
+- Structure
 - Masonry
-- Plumbing
 - Electrical
-- Plaster
-- Flooring
-- Paint
-- Fixtures & Finishing
-- External Works
-- Final Inspection
-- Ready for Sale
+- Plumbing
+- Finishing
+- Ready For Sale
+
+Auto-created when a Development project is created. Sell Project is available at any stage (Sold As-Is → Sold During Construction; stages lock).
 
 ### Stage Features
 
@@ -313,6 +313,7 @@ Manage property sales.
 - Installment plans
 - Sale agreements
 - Payment tracking
+- Project-card collections: **Installment** (single due) or **Full/Direct** (lump sum FIFO across installments / catch-up)
 
 ### Sales Reports
 
@@ -412,9 +413,10 @@ Central control dashboard.
 
 - Audit logs
 - Backup & restore
-- System configuration
+- System configuration (Measurement Standards: Pakistan Marla = 272.25 Sq Ft or custom; Gazz = 9 Sq Ft fixed)
 - Notification management
 - Activity monitoring
+- Data reset (Danger Zone)
 
 ---
 
@@ -427,6 +429,7 @@ projects
 project_stages
 stage_budgets
 stage_progress
+app_settings
 suppliers
 purchase_orders
 purchase_order_items

@@ -11,6 +11,9 @@ import { getSuppliers } from '../api/suppliers';
 import type { Supplier } from '../api/suppliers';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 type Tab = 'stock' | 'catalog' | 'receive' | 'issues' | 'ledger' | 'utilization';
 
@@ -38,6 +41,7 @@ const UNITS = ['bags', 'kg', 'ton', 'pieces', 'nos', 'ft', 'sft', 'rft', 'liter'
 const CATEGORIES = ['Cement & Binding', 'Steel & Iron', 'Bricks & Blocks', 'Sand & Aggregate', 'Timber & Wood', 'Electrical', 'Plumbing', 'Finishing', 'Hardware', 'Safety', 'Tools & Equipment', 'Other'];
 
 export default function InventoryPage() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('stock');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [stock, setStock] = useState<StockSummary[]>([]);
@@ -50,6 +54,7 @@ export default function InventoryPage() {
 
   // Direct purchase state
   const [showDirectPurchase, setShowDirectPurchase] = useState(false);
+  useBodyScrollLock(showDirectPurchase);
   const [dpHeader, setDpHeader] = useState({ supplier_id: '', project_id: '', purchase_date: new Date().toISOString().split('T')[0], invoice_no: '', notes: '' });
   const [dpLines, setDpLines] = useState<{ material_id: string; quantity: string; unit_cost: string }[]>([{ material_id: '', quantity: '', unit_cost: '' }]);
   const [dpSaving, setDpSaving] = useState(false);
@@ -361,8 +366,19 @@ export default function InventoryPage() {
                         setError(''); setShowModal('material');
                       }} className="text-blue-600 text-xs hover:underline mr-2">Edit</button>
                       <button onClick={async () => {
-                        if (!confirm('Delete this material? This cannot be undone.')) return;
-                        try { await deleteMaterial(m.id); loadData(); } catch (e: any) { alert(e.message); }
+                        const ok = await confirm({
+                          title: 'Delete material',
+                          message: 'Delete this material? This cannot be undone.',
+                          confirmLabel: 'Delete',
+                        });
+                        if (!ok) return;
+                        try {
+                          await deleteMaterial(m.id);
+                          loadData();
+                          notify.success('Material deleted');
+                        } catch (e: any) {
+                          notifyError(e);
+                        }
                       }} className="text-red-600 text-xs hover:underline">Delete</button>
                     </td>
                   </tr>

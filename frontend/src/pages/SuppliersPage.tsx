@@ -5,10 +5,13 @@ import { getPurchaseOrders } from '../api/procurement';
 import type { PurchaseOrder } from '../api/procurement';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../components/DetailDrawer';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 const CATEGORIES = ['Materials', 'Equipment', 'Services', 'Electrical', 'Plumbing', 'Other'];
 
 export default function SuppliersPage() {
+  const confirm = useConfirm();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -64,12 +67,20 @@ export default function SuppliersPage() {
   };
 
   const handleDelete = async (id: string, name?: string) => {
-    if (!confirm(`Delete supplier "${name ?? id}"?\n\nThis cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete supplier',
+      message: `Delete supplier "${name ?? id}"?\n\nThis cannot be undone.`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     try {
       await deleteSupplier(id);
       setSelectedSupplier(null);
       load();
-    } catch (e: any) { setError(e.message); }
+      notify.success('Supplier deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const filtered = suppliers.filter(s =>

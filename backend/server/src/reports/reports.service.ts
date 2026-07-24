@@ -236,16 +236,18 @@ export class ReportsService {
       GROUP BY p.id, p.name ORDER BY total_paid DESC
     `, project_id ? [project_id] : []);
 
-    const labourWhere = project_id ? `AND project_id = $1` : '';
     const byContractor = await this.q(`
       SELECT
         lc.id AS contractor_id, lc.name AS contractor_name, lc.contractor_type,
         COALESCE(SUM(CAST(lp.amount AS NUMERIC)), 0) AS total_paid,
         COALESCE(SUM(CAST(la.present_days AS NUMERIC)), 0) AS total_days
       FROM labour_contractors lc
-      LEFT JOIN labour_payments lp ON lp.contractor_id = lc.id ${labourWhere}
-      LEFT JOIN labour_attendance la ON la.contractor_id = lc.id ${labourWhere}
-      GROUP BY lc.id, lc.name, lc.contractor_type ORDER BY total_paid DESC
+      LEFT JOIN labour_payments lp
+        ON lp.contractor_id = lc.id${project_id ? ' AND lp.project_id = $1' : ''}
+      LEFT JOIN labour_attendance la
+        ON la.contractor_id = lc.id${project_id ? ' AND la.project_id = $1' : ''}
+      GROUP BY lc.id, lc.name, lc.contractor_type
+      ORDER BY total_paid DESC
     `, project_id ? [project_id] : []);
 
     return {

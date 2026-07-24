@@ -18,6 +18,9 @@ import {
   rejectMaterialRequest,
   convertMaterialRequestToPo,
 } from '../api/materialRequests';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import type { MaterialRequest, MaterialRequestItem } from '../api/materialRequests';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -36,6 +39,7 @@ type ProcTab = 'orders' | 'requests';
 
 
 export default function ProcurementPage() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<ProcTab>('requests');
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [requests, setRequests] = useState<MaterialRequest[]>([]);
@@ -64,6 +68,7 @@ export default function ProcurementPage() {
   // Receive-to-inventory modal
   const [materials, setMaterials] = useState<Material[]>([]);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
+  useBodyScrollLock(showReceiveModal);
   const [receiveLines, setReceiveLines] = useState<{ material_id: string; material_name: string; quantity: string; unit_cost: string; skip: boolean }[]>([]);
   const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
   const [receiving, setReceiving] = useState(false);
@@ -225,8 +230,19 @@ export default function ProcurementPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this purchase order? This will also remove all items and receipts.')) return;
-    try { await deletePurchaseOrder(id); load(); } catch (e: any) { setError(e.message); }
+    const ok = await confirm({
+      title: 'Delete purchase order',
+      message: 'Delete this purchase order? This will also remove all items and receipts.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await deletePurchaseOrder(id);
+      load();
+      notify.success('Purchase order deleted');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   const handleExportCSV = () => {

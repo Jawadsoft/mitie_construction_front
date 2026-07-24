@@ -45,6 +45,12 @@ Leave historical root docs [`scope.md`](../scope.md) and [`development-plan.md`]
 | Fund KPI Owner Capital | Sum of `EQUITY` commitments | Investor count = `INVESTOR` sources; Loan = sum `LOAN` committed |
 | Fund commitment amount UX | Min PKR **1,000**; commas + words (Lakh/Crore) | Client-side only; API still gets plain digits |
 | Funds quick-add bank | PK major banks combobox; opening balance **0** | Full bank setup (opening balance) remains under Accounting |
+| Project taxonomy | **`project_type` READY_PROPERTY \| LAND** + subtype + **`project_strategy` DIRECT_SALE \| DEVELOPMENT** | Replaces category/purpose naming; matches Buy→Sell vs construct flow |
+| Ready Property strategy | **`DIRECT_SALE` only** | Ready assets: Purchase → Hold → Sell |
+| Land strategy | **`DIRECT_SALE` or `DEVELOPMENT`** | Flip land or develop then sell |
+| Stage gating | **DIRECT_SALE blocks stages** (API 400 + UI hide) | DEVELOPMENT uses stage management |
+| `asset_class` | Derived Residential/Commercial/Land | Compatibility for older filters |
+| Auto unit/parcel on create | **Not in this slice** | Units on Sales page; parcels on Land page |
 
 ## Schema application note
 

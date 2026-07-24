@@ -10,6 +10,7 @@ import {
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateStageDto } from './dto/create-stage.dto';
+import { SellDuringConstructionDto } from './dto/sell-during-construction.dto';
 
 @Controller('api/projects')
 export class ProjectsController {
@@ -33,6 +34,14 @@ export class ProjectsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: Partial<CreateProjectDto>) {
     return this.projectsService.update(id, dto);
+  }
+
+  @Post(':id/sell-during-construction')
+  sellDuringConstruction(
+    @Param('id') id: string,
+    @Body() dto: SellDuringConstructionDto,
+  ) {
+    return this.projectsService.sellDuringConstruction(id, dto);
   }
 
   @Delete(':id')

@@ -1,5 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getAuthHeaders } from '../api/client';
+import {
+  getMeasurementSettings,
+  updateMeasurementSettings,
+  type MeasurementSettings,
+  type MeasurementStandard,
+} from '../api/settings';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { GAZZ_SQFT, PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
+import { notify, notifyError } from '../utils/toast';
 
 type ResetMode = 'transactions' | 'full';
 
@@ -78,8 +87,47 @@ export default function SettingsPage() {
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [expanded, setExpanded] = useState<ResetMode | null>(null);
 
+  const [measurement, setMeasurement] = useState<MeasurementSettings | null>(null);
+  const [standard, setStandard] = useState<MeasurementStandard>('PAKISTAN');
+  const [customMarla, setCustomMarla] = useState(String(PAKISTAN_MARLA_SQFT));
+  const [measurementLoading, setMeasurementLoading] = useState(true);
+  const [measurementSaving, setMeasurementSaving] = useState(false);
+
+  useBodyScrollLock(selected !== null);
+
+  useEffect(() => {
+    setMeasurementLoading(true);
+    getMeasurementSettings()
+      .then((m) => {
+        setMeasurement(m);
+        setStandard(m.standard);
+        setCustomMarla(String(m.marla_sqft));
+      })
+      .catch((e) => notifyError(e, 'Failed to load measurement settings'))
+      .finally(() => setMeasurementLoading(false));
+  }, []);
+
   const selectedOption = RESET_OPTIONS.find(o => o.mode === selected) ?? null;
   const canConfirm = confirmText === 'RESET' && selected !== null;
+
+  const handleSaveMeasurement = async () => {
+    setMeasurementSaving(true);
+    try {
+      const body =
+        standard === 'PAKISTAN'
+          ? { standard: 'PAKISTAN' as const }
+          : { standard: 'CUSTOM' as const, marla_sqft: Number(customMarla) };
+      const saved = await updateMeasurementSettings(body);
+      setMeasurement(saved);
+      setStandard(saved.standard);
+      setCustomMarla(String(saved.marla_sqft));
+      notify.success('Measurement standards saved');
+    } catch (e: unknown) {
+      notifyError(e, 'Failed to save measurement settings');
+    } finally {
+      setMeasurementSaving(false);
+    }
+  };
 
   const handleReset = async () => {
     if (!selected || !canConfirm) return;
@@ -122,6 +170,89 @@ export default function SettingsPage() {
           {result.success ? '✓ ' : '✗ '}{result.message}
         </div>
       )}
+
+      {/* Measurement Standards */}
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
+        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <h2 className="text-sm font-bold text-slate-900">Measurement Standards</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Controls Marla ↔ Sq. Ft conversion for project plot sizes. Gazz is fixed at {GAZZ_SQFT} Sq. Ft.
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          {measurementLoading ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="measurement-standard"
+                    className="mt-1"
+                    checked={standard === 'PAKISTAN'}
+                    onChange={() => {
+                      setStandard('PAKISTAN');
+                      setCustomMarla(String(PAKISTAN_MARLA_SQFT));
+                    }}
+                    disabled={measurementSaving}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-800">Pakistan Standard</span>
+                    <span className="block text-xs text-slate-500">1 Marla = {PAKISTAN_MARLA_SQFT} Sq. Ft</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="measurement-standard"
+                    className="mt-1"
+                    checked={standard === 'CUSTOM'}
+                    onChange={() => setStandard('CUSTOM')}
+                    disabled={measurementSaving}
+                  />
+                  <span className="block text-sm font-medium text-slate-800">Custom</span>
+                </label>
+              </div>
+
+              {standard === 'CUSTOM' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Marla = __________ Sq. Ft
+                  </label>
+                  <input
+                    type="number"
+                    min={0.0001}
+                    step="any"
+                    className="w-full max-w-xs rounded border border-slate-300 px-3 py-2 text-sm"
+                    value={customMarla}
+                    onChange={(e) => setCustomMarla(e.target.value)}
+                    disabled={measurementSaving}
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-slate-500">
+                Current: 1 Marla = {measurement?.marla_sqft ?? PAKISTAN_MARLA_SQFT} Sq. Ft · 1 Gazz = {GAZZ_SQFT} Sq. Ft
+              </p>
+
+              <button
+                type="button"
+                onClick={handleSaveMeasurement}
+                disabled={measurementSaving}
+                className="inline-flex items-center justify-center gap-2 rounded bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+              >
+                {measurementSaving && (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                )}
+                {measurementSaving ? 'Saving…' : 'Save Measurement Standards'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Danger Zone */}
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-red-100">

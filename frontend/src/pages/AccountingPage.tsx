@@ -32,6 +32,8 @@ import type {
   BankReconciliation,
 } from '../api/accounting';
 import Modal from '../components/Modal';
+import { useConfirm } from '../components/ConfirmDialog';
+import { notify, notifyError } from '../utils/toast';
 
 type Tab = 'journal' | 'accounts' | 'trial-balance' | 'general-ledger' | 'balance-sheet' | 'bank-recon';
 
@@ -44,6 +46,7 @@ const ACCOUNT_TYPE_COLORS: Record<string, string> = {
 };
 
 export default function AccountingPage() {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('journal');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -223,13 +226,20 @@ export default function AccountingPage() {
             <div className="flex gap-2">
               <button
                 onClick={async () => {
-                  if (!confirm('Remove auto-posted journals whose expense/sale/payment/fund row was already deleted?')) return;
+                  const ok = await confirm({
+                    title: 'Clean orphan journals',
+                    message: 'Remove auto-posted journals whose expense/sale/payment/fund row was already deleted?',
+                    confirmLabel: 'Clean',
+                    danger: true,
+                  });
+                  if (!ok) return;
                   try {
                     const result = await purgeOrphanJournals();
-                    alert(result.deleted ? `Removed ${result.deleted} orphan journal(s).` : 'No orphan journals found.');
+                    if (result.deleted) notify.success(`Removed ${result.deleted} orphan journal(s).`);
+                    else notify.info('No orphan journals found.');
                     await load();
                   } catch (e: unknown) {
-                    setError(e instanceof Error ? e.message : 'Purge failed');
+                    setError(notifyError(e, 'Purge failed'));
                   }
                 }}
                 className="border border-amber-500 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-50"
@@ -295,12 +305,18 @@ export default function AccountingPage() {
                       className="text-xs text-red-600 hover:underline"
                       onClick={async (ev) => {
                         ev.stopPropagation();
-                        if (!confirm(`Delete journal JE-${e.id}${e.reference_no ? ` (${e.reference_no})` : ''}?`)) return;
+                        const ok = await confirm({
+                          title: 'Delete journal',
+                          message: `Delete journal JE-${e.id}${e.reference_no ? ` (${e.reference_no})` : ''}?`,
+                          confirmLabel: 'Delete',
+                        });
+                        if (!ok) return;
                         try {
                           await deleteJournalEntry(e.id);
                           await load();
+                          notify.success('Journal deleted');
                         } catch (err: unknown) {
-                          setError(err instanceof Error ? err.message : 'Delete failed');
+                          setError(notifyError(err, 'Delete failed'));
                         }
                       }}
                     >
@@ -324,16 +340,26 @@ export default function AccountingPage() {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => (
-                <tr key={a.id} className="border-t">
-                  <td className="px-4 py-3 font-mono font-medium">{a.code}</td>
-                  <td className="px-4 py-3">{a.name}</td>
-                  <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${ACCOUNT_TYPE_COLORS[a.type]}`}>{a.type}</span></td>
-                  <td className="px-4 py-3">{a.is_active ? 'Yes' : 'No'}</td>
-                </tr>
-              ))}
+              {accounts.map((a) => {
+                const isChild = Boolean(a.parent_account_id);
+                return (
+                  <tr key={a.id} className="border-t">
+                    <td className={`px-4 py-3 font-mono font-medium ${isChild ? 'pl-8 text-gray-700' : ''}`}>
+                      {isChild ? `↳ ${a.code}` : a.code}
+                    </td>
+                    <td className={`px-4 py-3 ${isChild ? 'pl-6 text-gray-700' : 'font-medium text-gray-900'}`}>
+                      {a.name}
+                    </td>
+                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${ACCOUNT_TYPE_COLORS[a.type]}`}>{a.type}</span></td>
+                    <td className="px-4 py-3">{a.is_active ? 'Yes' : 'No'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          <p className="px-4 py-2 text-xs text-gray-500 border-t">
+            Partner banks are COA children under <span className="font-mono">1000 Cash &amp; Bank</span>. Fund receipts and bank payments post to those sub-accounts (journal + trial balance).
+          </p>
         </div>
       ) : tab === 'trial-balance' ? (
         <div className="bg-white rounded-xl border overflow-hidden">
@@ -349,21 +375,29 @@ export default function AccountingPage() {
             <tbody>
               {trialBalance.length === 0 ? (
                 <tr><td colSpan={4} className="text-center text-gray-400 py-8">No posted entries yet.</td></tr>
-              ) : trialBalance.map((r) => (
+              ) : trialBalance.map((r) => {
+                const acc = accounts.find((a) => a.id === r.account_id);
+                const isChild = Boolean(acc?.parent_account_id);
+                return (
                 <tr key={r.account_id} className="border-t">
-                  <td className="px-4 py-3 font-mono">{r.code}</td>
-                  <td className="px-4 py-3">{r.name}</td>
+                  <td className={`px-4 py-3 font-mono ${isChild ? 'pl-8' : ''}`}>{isChild ? `↳ ${r.code}` : r.code}</td>
+                  <td className={`px-4 py-3 ${isChild ? 'pl-6' : ''}`}>{r.name}</td>
                   <td className="px-4 py-3 text-right font-mono">{Number(r.total_debit).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right font-mono">{Number(r.total_credit).toLocaleString()}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       ) : tab === 'general-ledger' ? (
         <div className="space-y-3">
           <select value={glAccountId} onChange={(e) => setGlAccountId(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} – {a.name}</option>)}
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.parent_account_id ? `  ${a.code} – ${a.name}` : `${a.code} – ${a.name}`}
+              </option>
+            ))}
           </select>
           <div className="bg-white rounded-xl border overflow-hidden">
             <table className="w-full text-sm">
@@ -555,9 +589,14 @@ export default function AccountingPage() {
             <input placeholder="Account number" value={bankForm.account_number} onChange={(e) => setBankForm((f) => ({ ...f, account_number: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" />
             <input placeholder="Opening balance" value={bankForm.opening_balance} onChange={(e) => setBankForm((f) => ({ ...f, opening_balance: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" />
             <select value={bankForm.account_id} onChange={(e) => setBankForm((f) => ({ ...f, account_id: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm">
-              <option value="">Link COA account (optional)</option>
-              {accounts.filter((a) => a.type === 'ASSET').map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
+              <option value="">Auto: new sub-account under 1000 Cash &amp; Bank</option>
+              {accounts.filter((a) => a.type === 'ASSET' && a.code !== '1000').map((a) => (
+                <option key={a.id} value={a.id}>{a.code} {a.name}</option>
+              ))}
             </select>
+            <p className="text-xs text-gray-500">
+              Leave blank to create e.g. HBL / BAHL under Cash &amp; Bank. Opening balance posts JE (Dr bank / Cr Owner Equity) into the journal and trial balance.
+            </p>
             <button
               onClick={async () => {
                 const created = await createBankAccount({

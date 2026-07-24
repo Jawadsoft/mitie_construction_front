@@ -18,6 +18,8 @@ Checklist-style roadmap for agents and humans. Detail checklists also live in [d
 - [x] Auth login (JWT)
 - [x] Users / roles seed model
 - [x] Projects and construction stages
+- [x] Project type (`READY_PROPERTY` \| `LAND`) + subtype + strategy (`DIRECT_SALE` \| `DEVELOPMENT`)
+- [x] Stage gating for Direct Sale projects
 - [x] Stage budgets
 - [ ] Hardened RBAC on all mutating routes (partial) — parallel with Phase 8
 
@@ -34,6 +36,7 @@ Checklist-style roadmap for agents and humans. Detail checklists also live in [d
 ## Phase 3 — Sales, funds, cashflow
 
 - [x] Property units, customers, sales, installments
+- [x] Project-card collections: Installment vs Full/Direct (`POST /api/sales/list/:id/collect`)
 - [x] Fund sources and transactions
 - [x] Funds-first product entry: Capital nav, commitment status, fund dashboard KPIs ([Tasks.md](Tasks.md) Product journey)
 - [x] Funds form UX: min commitment 1,000 + money words; PK bank / source-name comboboxes; inline new project/bank
