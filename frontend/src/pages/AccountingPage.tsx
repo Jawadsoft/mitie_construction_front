@@ -5,6 +5,7 @@ import {
   getJournalEntries,
   getJournalEntry,
   createJournalEntry,
+  updateJournalEntry,
   postJournalEntry,
   deleteJournalEntry,
   purgeOrphanJournals,
@@ -13,6 +14,7 @@ import {
   getBalanceSheet,
   getBankAccounts,
   createBankAccount,
+  updateBankAccount,
   getStatementLines,
   createStatementLines,
   matchStatementLine,
@@ -65,8 +67,10 @@ export default function AccountingPage() {
   const [recons, setRecons] = useState<BankReconciliation[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showBankModal, setShowBankModal] = useState(false);
+  const [showEditBankModal, setShowEditBankModal] = useState(false);
   const [showStmtModal, setShowStmtModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -83,6 +87,13 @@ export default function AccountingPage() {
   ]);
   const [accountForm, setAccountForm] = useState({ code: '', name: '', type: 'ASSET' });
   const [bankForm, setBankForm] = useState({ name: '', bank_name: '', account_number: '', opening_balance: '0', account_id: '' });
+  const [editBankForm, setEditBankForm] = useState({
+    name: '',
+    bank_name: '',
+    account_number: '',
+    opening_balance: '0',
+    opening_date: new Date().toISOString().split('T')[0],
+  });
   const [stmtForm, setStmtForm] = useState({ statement_date: new Date().toISOString().split('T')[0], description: '', amount: '', reference: '' });
   const [reconForm, setReconForm] = useState({
     period_start: new Date().toISOString().slice(0, 8) + '01',
@@ -139,6 +150,54 @@ export default function AccountingPage() {
     }
   };
 
+  const openEditEntry = async (id: string) => {
+    try {
+      setError('');
+      const je = await getJournalEntry(id);
+      setEditingEntryId(je.id);
+      setEntryForm({
+        entry_date: String(je.entry_date).slice(0, 10),
+        reference_no: je.reference_no || '',
+        description: je.description || '',
+        status: je.status || 'Draft',
+      });
+      const jeLines = (je.lines ?? []).map((l) => ({
+        account_id: l.account_id,
+        dr_cr: l.dr_cr,
+        amount: String(l.amount),
+        narration: l.narration || '',
+      }));
+      setLines(
+        jeLines.length >= 2
+          ? jeLines
+          : [
+              { account_id: '', dr_cr: 'DEBIT', amount: '', narration: '' },
+              { account_id: '', dr_cr: 'CREDIT', amount: '', narration: '' },
+            ],
+      );
+      setSelectedEntry(null);
+      setShowModal(true);
+    } catch (e: unknown) {
+      setError(notifyError(e, 'Failed to load journal'));
+    }
+  };
+
+  const openNewEntry = () => {
+    setEditingEntryId(null);
+    setEntryForm({
+      entry_date: new Date().toISOString().split('T')[0],
+      reference_no: '',
+      description: '',
+      status: 'Draft',
+    });
+    setLines([
+      { account_id: '', dr_cr: 'DEBIT', amount: '', narration: '' },
+      { account_id: '', dr_cr: 'CREDIT', amount: '', narration: '' },
+    ]);
+    setError('');
+    setShowModal(true);
+  };
+
   const updateLine = (idx: number, field: keyof JournalEntryLine, value: string) => {
     setLines((prev) => {
       const u = [...prev];
@@ -151,16 +210,36 @@ export default function AccountingPage() {
   const totalCredit = lines.filter((l) => l.dr_cr === 'CREDIT').reduce((s, l) => s + Number(l.amount || 0), 0);
   const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01;
 
-  const handleCreate = async () => {
+  const handleSaveEntry = async () => {
     if (!isBalanced) { setError('Debits must equal credits'); return; }
     if (lines.some((l) => !l.account_id || !l.amount)) { setError('All lines must have an account and amount'); return; }
     setError('');
     try {
-      await createJournalEntry({ entry: entryForm, lines: lines as JournalEntryLine[] });
+      if (editingEntryId) {
+        await updateJournalEntry(editingEntryId, {
+          entry: entryForm,
+          lines: lines as JournalEntryLine[],
+        });
+        notify.success('Journal updated');
+      } else {
+        await createJournalEntry({ entry: entryForm, lines: lines as JournalEntryLine[] });
+        notify.success('Journal draft saved');
+      }
       setShowModal(false);
-      load();
-    } catch (e: any) {
-      setError(e.message);
+      setEditingEntryId(null);
+      await load();
+      if (tab === 'general-ledger' && glAccountId) {
+        setGlReport(
+          await getGeneralLedger(
+            glAccountId,
+            glFrom || undefined,
+            glTo || undefined,
+            glIncludeChildren,
+          ),
+        );
+      }
+    } catch (e: unknown) {
+      setError(notifyError(e, 'Failed to save journal'));
     }
   };
 
@@ -181,6 +260,12 @@ export default function AccountingPage() {
           <button onClick={() => setSelectedEntry(null)} className="text-blue-600 hover:underline text-sm">← Back</button>
           <h1 className="text-xl font-bold text-gray-800">Journal Entry #{selectedEntry.id}</h1>
           <span className={`text-xs px-2 py-1 rounded-full font-medium ${selectedEntry.status === 'Posted' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>{selectedEntry.status}</span>
+          <button
+            onClick={() => openEditEntry(selectedEntry.id)}
+            className="border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-slate-50"
+          >
+            Edit
+          </button>
           {selectedEntry.status === 'Draft' && (
             <button onClick={() => handlePost(selectedEntry.id)} className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium">Post Entry</button>
           )}
@@ -258,7 +343,7 @@ export default function AccountingPage() {
               >
                 Clean orphan JEs
               </button>
-              <button onClick={() => { setError(''); setShowModal(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ Journal Entry</button>
+              <button onClick={openNewEntry} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ Journal Entry</button>
             </div>
           )}
           {tab === 'accounts' && (
@@ -267,6 +352,25 @@ export default function AccountingPage() {
           {tab === 'bank-recon' && (
             <>
               <button onClick={() => setShowBankModal(true)} className="border border-blue-600 text-blue-700 px-3 py-2 rounded-lg text-sm">+ Bank Account</button>
+              <button
+                disabled={!selectedBankId}
+                onClick={() => {
+                  const b = bankAccounts.find((x) => x.id === selectedBankId);
+                  if (!b) return;
+                  setEditBankForm({
+                    name: b.name || '',
+                    bank_name: b.bank_name || '',
+                    account_number: b.account_number || '',
+                    opening_balance: String(b.opening_balance ?? '0'),
+                    opening_date: new Date().toISOString().split('T')[0],
+                  });
+                  setError('');
+                  setShowEditBankModal(true);
+                }}
+                className="border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm disabled:opacity-50"
+              >
+                Edit bank / opening
+              </button>
               <button onClick={() => setShowStmtModal(true)} disabled={!selectedBankId} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm disabled:opacity-50">+ Statement Line</button>
             </>
           )}
@@ -311,7 +415,13 @@ export default function AccountingPage() {
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${e.status === 'Posted' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>{e.status}</span>
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center space-x-2 whitespace-nowrap">
+                    <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => viewEntry(e.id)}>
+                      View
+                    </button>
+                    <button type="button" className="text-xs text-slate-700 hover:underline" onClick={() => openEditEntry(e.id)}>
+                      Edit
+                    </button>
                     <button
                       type="button"
                       className="text-xs text-red-600 hover:underline"
@@ -422,7 +532,7 @@ export default function AccountingPage() {
           };
           const bal = (amount: number, side: string) =>
             side ? `${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${side}` : '—';
-          const colSpan = showAccountCol ? 7 : 6;
+          const colSpan = showAccountCol ? 8 : 7;
 
           return (
             <div className="space-y-3">
@@ -542,6 +652,7 @@ export default function AccountingPage() {
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Debit</th>
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Credit</th>
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-36">Balance</th>
+                        <th className="px-3 py-2.5 text-center text-gray-600 font-medium w-28">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -570,6 +681,28 @@ export default function AccountingPage() {
                             <td className="px-3 py-2 text-right font-mono font-medium whitespace-nowrap">
                               {bal(r.running_balance, r.balance_side)}
                             </td>
+                            <td className="px-3 py-2 text-center whitespace-nowrap">
+                              {r.is_opening || !r.journal_entry_id ? (
+                                <span className="text-xs text-slate-300">—</span>
+                              ) : (
+                                <span className="inline-flex gap-2">
+                                  <button
+                                    type="button"
+                                    className="text-xs text-blue-600 hover:underline"
+                                    onClick={() => viewEntry(r.journal_entry_id!)}
+                                  >
+                                    View
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-slate-700 hover:underline"
+                                    onClick={() => openEditEntry(r.journal_entry_id!)}
+                                  >
+                                    Edit
+                                  </button>
+                                </span>
+                              )}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -589,6 +722,7 @@ export default function AccountingPage() {
                           <td className="px-3 py-2.5 text-right font-mono font-semibold whitespace-nowrap">
                             {bal(glReport.totals.closing_balance, glReport.totals.closing_balance_side)}
                           </td>
+                          <td />
                         </tr>
                       </tfoot>
                     )}
@@ -623,10 +757,21 @@ export default function AccountingPage() {
         </div>
       ) : tab === 'bank-recon' ? (
         <div className="space-y-4">
-          <select value={selectedBankId} onChange={(e) => setSelectedBankId(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            <option value="">Select bank account</option>
-            {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.bank_name || 'Bank'})</option>)}
-          </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <select value={selectedBankId} onChange={(e) => setSelectedBankId(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+              <option value="">Select bank account</option>
+              {bankAccounts.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} ({b.bank_name || 'Bank'}) — open {Number(b.opening_balance || 0).toLocaleString()}
+                </option>
+              ))}
+            </select>
+            {selectedBankId && (
+              <p className="text-xs text-slate-500">
+                Opening posts as journal <span className="font-mono">BANK-OPEN-{selectedBankId}</span> (Dr bank / Cr equity). Use Edit to change or clear it.
+              </p>
+            )}
+          </div>
           <div className="bg-white rounded-xl border overflow-hidden">
             <div className="px-4 py-3 border-b font-semibold text-sm">Statement Lines</div>
             <table className="w-full text-sm">
@@ -699,7 +844,13 @@ export default function AccountingPage() {
       ) : null}
 
       {showModal && (
-        <Modal title="New Journal Entry" onClose={() => setShowModal(false)}>
+        <Modal
+          title={editingEntryId ? `Edit Journal JE-${editingEntryId}` : 'New Journal Entry'}
+          onClose={() => {
+            setShowModal(false);
+            setEditingEntryId(null);
+          }}
+        >
           <div className="space-y-3">
             {error && <p className="text-red-600 text-sm">{error}</p>}
             <div className="grid grid-cols-2 gap-3">
@@ -724,7 +875,9 @@ export default function AccountingPage() {
               <button type="button" onClick={() => setLines((p) => [...p, { account_id: '', dr_cr: 'DEBIT', amount: '', narration: '' }])} className="text-blue-600 text-xs">+ Line</button>
             </div>
             <p className={`text-xs ${isBalanced ? 'text-green-700' : 'text-red-600'}`}>Debit {totalDebit.toLocaleString()} / Credit {totalCredit.toLocaleString()}</p>
-            <button onClick={handleCreate} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">Save Draft</button>
+            <button onClick={handleSaveEntry} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">
+              {editingEntryId ? 'Save changes' : 'Save Draft'}
+            </button>
           </div>
         </Modal>
       )}
@@ -784,6 +937,108 @@ export default function AccountingPage() {
             >
               Create
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {showEditBankModal && selectedBankId && (
+        <Modal title="Edit Bank / Opening Balance" onClose={() => setShowEditBankModal(false)}>
+          <div className="space-y-3">
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+            <input
+              placeholder="Display name"
+              value={editBankForm.name}
+              onChange={(e) => setEditBankForm((f) => ({ ...f, name: e.target.value }))}
+              className="w-full border rounded-lg px-3 py-2 text-sm"
+            />
+            <input
+              placeholder="Bank name"
+              value={editBankForm.bank_name}
+              onChange={(e) => setEditBankForm((f) => ({ ...f, bank_name: e.target.value }))}
+              className="w-full border rounded-lg px-3 py-2 text-sm"
+            />
+            <input
+              placeholder="Account number"
+              value={editBankForm.account_number}
+              onChange={(e) => setEditBankForm((f) => ({ ...f, account_number: e.target.value }))}
+              className="w-full border rounded-lg px-3 py-2 text-sm"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Opening balance</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editBankForm.opening_balance}
+                  onChange={(e) => setEditBankForm((f) => ({ ...f, opening_balance: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Opening date</label>
+                <input
+                  type="date"
+                  value={editBankForm.opening_date}
+                  onChange={(e) => setEditBankForm((f) => ({ ...f, opening_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Saving rebuilds journal <span className="font-mono">BANK-OPEN-{selectedBankId}</span>. Set amount to 0 or use Clear to remove the opening JE.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Clear opening balance?',
+                    message: 'This deletes the BANK-OPEN journal and sets opening to 0. Collections/expenses are not affected.',
+                    confirmLabel: 'Clear opening',
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  try {
+                    await updateBankAccount(selectedBankId, { clear_opening: true });
+                    notify.success('Opening balance cleared');
+                    setShowEditBankModal(false);
+                    await load();
+                  } catch (e: unknown) {
+                    setError(notifyError(e, 'Failed to clear opening'));
+                  }
+                }}
+                className="flex-1 border border-red-300 text-red-700 py-2 rounded-lg text-sm hover:bg-red-50"
+              >
+                Clear opening
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!editBankForm.name.trim()) {
+                    setError('Display name is required');
+                    return;
+                  }
+                  try {
+                    await updateBankAccount(selectedBankId, {
+                      name: editBankForm.name.trim(),
+                      bank_name: editBankForm.bank_name || null,
+                      account_number: editBankForm.account_number || null,
+                      opening_balance: editBankForm.opening_balance || '0',
+                      opening_date: editBankForm.opening_date,
+                    });
+                    notify.success('Bank updated');
+                    setShowEditBankModal(false);
+                    await load();
+                  } catch (e: unknown) {
+                    setError(notifyError(e, 'Failed to update bank'));
+                  }
+                }}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </Modal>
       )}

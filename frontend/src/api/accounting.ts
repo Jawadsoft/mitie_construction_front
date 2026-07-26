@@ -180,6 +180,20 @@ export async function postJournalEntry(id: string): Promise<JournalEntry> {
   return data;
 }
 
+export async function updateJournalEntry(
+  id: string,
+  dto: { entry: Partial<JournalEntry>; lines: JournalEntryLine[] },
+): Promise<JournalEntry> {
+  const res = await fetch(`${BASE}/journal/${id}`, {
+    method: 'PATCH',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(dto),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || 'Failed to update journal entry');
+  return data;
+}
+
 export async function deleteJournalEntry(id: string): Promise<void> {
   const res = await fetch(`${BASE}/journal/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
   if (!res.ok) {
@@ -243,6 +257,20 @@ export async function createBankAccount(dto: Partial<BankAccount>): Promise<Bank
   });
   if (!res.ok) throw new Error('Failed to create bank account');
   return res.json();
+}
+
+export async function updateBankAccount(
+  id: string,
+  dto: Partial<BankAccount> & { opening_date?: string; clear_opening?: boolean },
+): Promise<BankAccount> {
+  const res = await fetch(`${BASE}/bank-accounts/${id}`, {
+    method: 'PATCH',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(dto),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Failed to update bank account');
+  return data;
 }
 
 export async function getStatementLines(bank_account_id: string): Promise<BankStatementLine[]> {

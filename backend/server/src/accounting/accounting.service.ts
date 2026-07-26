@@ -101,6 +101,7 @@ export class AccountingService implements OnModuleInit {
     bank: BankAccount,
     accountId: string,
     manager?: EntityManager,
+    entryDate?: string,
   ) {
     const opening = Number(bank.opening_balance || 0);
     if (!(opening > 0)) return null;
@@ -113,7 +114,7 @@ export class AccountingService implements OnModuleInit {
     return this.createAndPostEntry(
       {
         entry: {
-          entry_date: new Date().toISOString().slice(0, 10),
+          entry_date: entryDate || new Date().toISOString().slice(0, 10),
           reference_no: ref,
           description: `Opening balance: ${bank.name}`,
         },
@@ -134,6 +135,30 @@ export class AccountingService implements OnModuleInit {
       },
       manager,
     );
+  }
+
+  /**
+   * Replace BANK-OPEN-{bankId} journal to match opening_balance.
+   * Amount 0 deletes the opening JE (clear opening).
+   */
+  private async syncBankOpeningBalance(
+    bank: BankAccount,
+    opts?: { entry_date?: string; manager?: EntityManager },
+  ) {
+    const manager = opts?.manager;
+    const ref = `BANK-OPEN-${bank.id}`;
+    const jeRepo = manager ? manager.getRepository(JournalEntry) : this.jeRepo;
+    const existing = await jeRepo.findOne({ where: { reference_no: ref } });
+    const entryDate =
+      opts?.entry_date ||
+      (existing?.entry_date
+        ? String(existing.entry_date).slice(0, 10)
+        : new Date().toISOString().slice(0, 10));
+
+    await this.deleteJournalByReference(ref, manager);
+
+    if (!bank.account_id) return null;
+    return this.postBankOpeningBalance(bank, bank.account_id, manager, entryDate);
   }
 
   /** Migrate banks that still point at parent 1000 (or null) onto their own sub-accounts. */
@@ -246,6 +271,58 @@ export class AccountingService implements OnModuleInit {
       return { ...je, status: 'Posted' as const, lines };
     }
     return this.findJournalEntry(id);
+  }
+
+  async updateJournalEntry(
+    id: string,
+    dto: { entry?: Partial<JournalEntry>; lines?: Partial<JournalEntryLine>[] },
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const jeRepo = manager.getRepository(JournalEntry);
+      const jelRepo = manager.getRepository(JournalEntryLine);
+      const je = await jeRepo.findOne({ where: { id } });
+      if (!je) throw new NotFoundException('Journal entry not found');
+
+      if (dto.lines?.length) {
+        const debits = dto.lines
+          .filter((l) => l.dr_cr === 'DEBIT')
+          .reduce((s, l) => s + Number(l.amount), 0);
+        const credits = dto.lines
+          .filter((l) => l.dr_cr === 'CREDIT')
+          .reduce((s, l) => s + Number(l.amount), 0);
+        if (Math.abs(debits - credits) > 0.01) {
+          throw new BadRequestException('Debits must equal credits');
+        }
+        if (dto.lines.some((l) => !l.account_id || !l.amount)) {
+          throw new BadRequestException('All lines must have an account and amount');
+        }
+        await jelRepo.delete({ journal_entry_id: id });
+        for (const line of dto.lines) {
+          await jelRepo.save(
+            jelRepo.create({
+              account_id: line.account_id,
+              dr_cr: line.dr_cr,
+              amount: Number(line.amount).toFixed(2),
+              narration: line.narration ?? null,
+              journal_entry_id: id,
+            }),
+          );
+        }
+      }
+
+      const patch: Partial<JournalEntry> = {};
+      if (dto.entry?.entry_date !== undefined) patch.entry_date = dto.entry.entry_date;
+      if (dto.entry?.reference_no !== undefined) patch.reference_no = dto.entry.reference_no;
+      if (dto.entry?.description !== undefined) patch.description = dto.entry.description;
+      if (dto.entry?.project_id !== undefined) patch.project_id = dto.entry.project_id;
+      if (Object.keys(patch).length) {
+        await jeRepo.update(id, patch);
+      }
+
+      const updated = await jeRepo.findOne({ where: { id } });
+      const lines = await jelRepo.find({ where: { journal_entry_id: id }, relations: ['account'] });
+      return { ...updated!, lines };
+    });
   }
 
   /** Delete journal entry + lines by exact reference_no (e.g. EXP-12). No-op if missing. */
@@ -880,17 +957,62 @@ export class AccountingService implements OnModuleInit {
     });
   }
 
-  async updateBankAccount(id: string, dto: Partial<BankAccount>) {
+  async updateBankAccount(
+    id: string,
+    dto: Partial<BankAccount> & { opening_date?: string; clear_opening?: boolean },
+  ) {
     const row = await this.bankRepo.findOne({ where: { id } });
     if (!row) throw new NotFoundException('Bank account not found');
-    await this.bankRepo.update(id, dto);
-    const updated = await this.bankRepo.findOne({ where: { id } });
-    if (updated?.account_id && (dto.name !== undefined || dto.bank_name !== undefined)) {
-      await this.accountsRepo.update(updated.account_id, {
-        name: this.bankCoaDisplayName(updated),
-      });
-    }
-    return updated;
+
+    return this.dataSource.transaction(async (manager) => {
+      const bankRepo = manager.getRepository(BankAccount);
+      const accountsRepo = manager.getRepository(Account);
+
+      const patch: Partial<BankAccount> = {};
+      if (dto.name !== undefined) patch.name = dto.name;
+      if (dto.bank_name !== undefined) patch.bank_name = dto.bank_name;
+      if (dto.account_number !== undefined) patch.account_number = dto.account_number;
+      if (dto.is_active !== undefined) patch.is_active = dto.is_active;
+
+      const clearOpening = dto.clear_opening === true;
+      const openingChanged =
+        clearOpening ||
+        (dto.opening_balance !== undefined &&
+          Number(dto.opening_balance || 0) !== Number(row.opening_balance || 0)) ||
+        dto.opening_date !== undefined;
+
+      if (clearOpening) {
+        patch.opening_balance = '0';
+      } else if (dto.opening_balance !== undefined) {
+        const n = Number(dto.opening_balance);
+        if (Number.isNaN(n) || n < 0) {
+          throw new BadRequestException('opening_balance must be a non-negative number');
+        }
+        patch.opening_balance = n.toFixed(2);
+      }
+
+      if (Object.keys(patch).length) {
+        await bankRepo.update(id, patch);
+      }
+
+      const updated = await bankRepo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Bank account not found');
+
+      if (updated.account_id && (dto.name !== undefined || dto.bank_name !== undefined)) {
+        await accountsRepo.update(updated.account_id, {
+          name: this.bankCoaDisplayName(updated),
+        });
+      }
+
+      if (openingChanged) {
+        await this.syncBankOpeningBalance(updated, {
+          entry_date: dto.opening_date,
+          manager,
+        });
+      }
+
+      return updated;
+    });
   }
 
   getStatementLines(bank_account_id: string) {

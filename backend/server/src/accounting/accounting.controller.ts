@@ -52,6 +52,13 @@ export class AccountingController {
     return this.svc.postJournalEntry(id);
   }
 
+  @Patch('journal/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...WRITE_ROLES)
+  updateJournalEntry(@Param('id') id: string, @Body() dto: any) {
+    return this.svc.updateJournalEntry(id, dto);
+  }
+
   @Delete('journal/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(...WRITE_ROLES)
