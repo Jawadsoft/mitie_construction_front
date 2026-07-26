@@ -155,11 +155,117 @@ export class ExpensesService {
   }
 
   async update(id: string, dto: Partial<Expense>) {
-    const { entry_mode: _m, paid_amount: _p, status: _s, amount: _a, ...safe } = dto as Partial<Expense> & {
-      entry_mode?: string;
-    };
-    await this.repo.update(id, safe);
-    return this.repo.findOne({ where: { id } });
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Expense);
+      const expense = await repo.findOne({ where: { id } });
+      if (!expense) throw new NotFoundException('Expense not found');
+
+      // Keep original posting mode — switching DIRECT ↔ BILL would break AP/cash history
+      const entry_mode = expense.entry_mode === 'BILL' ? 'BILL' : 'DIRECT';
+      let payment_type =
+        dto.payment_type !== undefined ? String(dto.payment_type) : expense.payment_type;
+      if (entry_mode === 'BILL') payment_type = 'Credit';
+
+      const bank_account_id =
+        entry_mode === 'BILL'
+          ? null
+          : dto.bank_account_id !== undefined
+            ? dto.bank_account_id || null
+            : expense.bank_account_id;
+
+      const usesBank =
+        entry_mode === 'DIRECT' &&
+        (payment_type === 'Bank Transfer' ||
+          payment_type === 'Cheque' ||
+          payment_type === 'Bank');
+      if (usesBank && !bank_account_id) {
+        throw new BadRequestException('Select a partner bank for this payment');
+      }
+
+      const nextAmount =
+        dto.amount !== undefined ? Number(dto.amount).toFixed(2) : expense.amount;
+      if (!(Number(nextAmount) > 0)) {
+        throw new BadRequestException('Amount must be positive');
+      }
+
+      let paid_amount = expense.paid_amount;
+      let status = expense.status;
+      if (entry_mode === 'DIRECT') {
+        paid_amount = nextAmount;
+        status = 'Paid';
+      } else {
+        if (Number(nextAmount) + 0.009 < Number(expense.paid_amount)) {
+          throw new BadRequestException(
+            `Amount cannot be less than already paid (PKR ${Number(expense.paid_amount).toFixed(2)})`,
+          );
+        }
+        status =
+          Number(expense.paid_amount) <= 0.009
+            ? 'Unpaid'
+            : Number(expense.paid_amount) >= Number(nextAmount) - 0.009
+              ? 'Paid'
+              : 'Partial';
+      }
+
+      const project_id =
+        dto.project_id !== undefined && dto.project_id
+          ? String(dto.project_id)
+          : expense.project_id;
+      const project_stage_id =
+        dto.project_stage_id !== undefined && dto.project_stage_id
+          ? String(dto.project_stage_id)
+          : expense.project_stage_id;
+      if (!project_id) throw new BadRequestException('Project is required');
+      if (!project_stage_id) throw new BadRequestException('Stage is required');
+
+      await repo.update(id, {
+        project_id,
+        project_stage_id,
+        ...(dto.category !== undefined ? { category: dto.category } : {}),
+        ...(dto.vendor_type !== undefined ? { vendor_type: dto.vendor_type } : {}),
+        ...(dto.supplier_id !== undefined ? { supplier_id: dto.supplier_id || null } : {}),
+        ...(dto.contractor_id !== undefined
+          ? { contractor_id: dto.contractor_id || null }
+          : {}),
+        payment_type,
+        bank_account_id,
+        ...(dto.expense_date !== undefined ? { expense_date: dto.expense_date } : {}),
+        amount: nextAmount,
+        paid_amount,
+        status,
+        ...(dto.description !== undefined ? { description: dto.description || null } : {}),
+      });
+
+      const updated = await repo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Expense not found');
+
+      // Rebuild EXP-* so GL date/amount/bank/project match the expense
+      await this.accounting.deleteJournalByReference(`EXP-${id}`, manager);
+      await this.accounting.postExpenseJournal(updated, manager);
+
+      // If project changed on a bill, rebuild payment journals for project link
+      if (entry_mode === 'BILL' && String(project_id) !== String(expense.project_id)) {
+        const payments = await manager.getRepository(ExpensePayment).find({
+          where: { expense_id: id },
+        });
+        for (const p of payments) {
+          await this.accounting.deleteJournalByReference(`EXPPMT-${p.id}`, manager);
+          await this.accounting.postExpenseBillPaymentJournal(
+            updated,
+            {
+              id: p.id,
+              amount: p.amount,
+              paid_date: p.paid_date,
+              payment_method: p.payment_method,
+              bank_account_id: p.bank_account_id,
+            },
+            manager,
+          );
+        }
+      }
+
+      return updated;
+    });
   }
 
   async remove(id: string) {
