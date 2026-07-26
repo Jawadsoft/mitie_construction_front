@@ -531,9 +531,53 @@ export class SalesService {
     return { deleted: true };
   }
 
-  async updateSale(id: string, dto: any) {
-    await this.saleRepo.update(id, dto);
-    return this.saleRepo.findOne({ where: { id } });
+  async updateSale(id: string, dto: Partial<Sale>) {
+    return this.dataSource.transaction(async (manager) => {
+      const saleRepo = manager.getRepository(Sale);
+      const unitRepo = manager.getRepository(PropertyUnit);
+      const sale = await saleRepo.findOne({ where: { id } });
+      if (!sale) throw new NotFoundException('Sale not found');
+
+      const nextPrice =
+        dto.total_sale_price !== undefined
+          ? Number(dto.total_sale_price).toFixed(2)
+          : sale.total_sale_price;
+      if (!(Number(nextPrice) > 0)) {
+        throw new BadRequestException('total_sale_price must be positive');
+      }
+      if (Number(nextPrice) + 0.009 < Number(sale.total_paid)) {
+        throw new BadRequestException(
+          `Sale price cannot be less than already collected (PKR ${Number(sale.total_paid).toFixed(2)})`,
+        );
+      }
+
+      const patch: Partial<Sale> = {};
+      if (dto.sale_date !== undefined) patch.sale_date = dto.sale_date;
+      if (dto.total_sale_price !== undefined) patch.total_sale_price = nextPrice;
+      if (dto.notes !== undefined) patch.notes = dto.notes || null;
+      if (dto.customer_id !== undefined) patch.customer_id = dto.customer_id;
+      if (dto.status !== undefined && ['Active', 'Cancelled', 'Completed'].includes(dto.status)) {
+        patch.status = dto.status;
+      }
+      if (Object.keys(patch).length) {
+        await saleRepo.update(id, patch);
+      }
+
+      const updated = await saleRepo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Sale not found');
+
+      // Keep SALE-* in sync with price/date/notes/project
+      const unit = await unitRepo.findOne({ where: { id: updated.property_unit_id } });
+      await this.accounting.deleteJournalByReference(`SALE-${id}`, manager);
+      if (updated.status !== 'Cancelled') {
+        await this.accounting.postSaleJournal(updated, unit?.project_id ?? null, manager);
+      }
+
+      return saleRepo.findOne({
+        where: { id },
+        relations: ['customer', 'property_unit'],
+      });
+    });
   }
 
   async deleteSale(id: string) {

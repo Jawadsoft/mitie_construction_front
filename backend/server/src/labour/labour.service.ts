@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { LabourContractor } from './entities/labour-contractor.entity';
 import { LabourAttendance } from './entities/labour-attendance.entity';
 import { LabourPayment } from './entities/labour-payment.entity';
 import { LabourAdvance } from './entities/labour-advance.entity';
+import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
 export class LabourService {
@@ -13,6 +14,8 @@ export class LabourService {
     @InjectRepository(LabourAttendance) private readonly attendanceRepo: Repository<LabourAttendance>,
     @InjectRepository(LabourPayment) private readonly paymentsRepo: Repository<LabourPayment>,
     @InjectRepository(LabourAdvance) private readonly advancesRepo: Repository<LabourAdvance>,
+    private readonly dataSource: DataSource,
+    private readonly accounting: AccountingService,
   ) {}
 
   findAllContractors() { return this.contractorsRepo.find({ order: { name: 'ASC' } }); }
@@ -107,8 +110,43 @@ export class LabourService {
     return query.getMany();
   }
 
-  createPayment(dto: Partial<LabourPayment>) {
-    return this.paymentsRepo.save(this.paymentsRepo.create(dto));
+  private async postPaymentJournal(payment: LabourPayment, manager: EntityManager) {
+    const contractor = await manager.getRepository(LabourContractor).findOne({
+      where: { id: payment.contractor_id },
+    });
+    await this.accounting.postLabourPaymentJournal(
+      {
+        id: payment.id,
+        contractor_id: payment.contractor_id,
+        project_id: payment.project_id,
+        payment_date: payment.payment_date,
+        amount: payment.amount,
+        payment_method: payment.payment_method,
+        notes: payment.notes,
+        contractor_name: contractor?.name ?? null,
+      },
+      manager,
+    );
+  }
+
+  async createPayment(dto: Partial<LabourPayment>) {
+    if (!dto.contractor_id || !dto.project_id || !dto.payment_date || dto.amount == null) {
+      throw new BadRequestException('contractor_id, project_id, payment_date, and amount are required');
+    }
+    if (!(Number(dto.amount) > 0)) throw new BadRequestException('amount must be positive');
+
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(LabourPayment);
+      const payment = await repo.save(
+        repo.create({
+          ...dto,
+          amount: Number(dto.amount).toFixed(2),
+          payment_method: dto.payment_method || 'Cash',
+        }),
+      );
+      await this.postPaymentJournal(payment, manager);
+      return repo.findOne({ where: { id: payment.id }, relations: ['contractor'] });
+    });
   }
 
   findAdvances(filters: { project_id?: string; contractor_id?: string }) {
@@ -140,12 +178,45 @@ export class LabourService {
   }
 
   async updatePayment(id: string, dto: Partial<LabourPayment>) {
-    await this.paymentsRepo.update(id, dto);
-    return this.paymentsRepo.findOne({ where: { id } });
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(LabourPayment);
+      const existing = await repo.findOne({ where: { id } });
+      if (!existing) throw new NotFoundException('Payment not found');
+
+      const nextAmount =
+        dto.amount !== undefined ? Number(dto.amount).toFixed(2) : existing.amount;
+      if (!(Number(nextAmount) > 0)) throw new BadRequestException('amount must be positive');
+
+      await repo.update(id, {
+        ...(dto.contractor_id !== undefined ? { contractor_id: dto.contractor_id } : {}),
+        ...(dto.project_id !== undefined ? { project_id: dto.project_id } : {}),
+        ...(dto.project_stage_id !== undefined
+          ? { project_stage_id: dto.project_stage_id || null }
+          : {}),
+        ...(dto.payment_date !== undefined ? { payment_date: dto.payment_date } : {}),
+        amount: nextAmount,
+        ...(dto.payment_method !== undefined ? { payment_method: dto.payment_method } : {}),
+        ...(dto.reference_no !== undefined ? { reference_no: dto.reference_no || null } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes || null } : {}),
+      });
+
+      const updated = await repo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Payment not found');
+
+      await this.accounting.deleteJournalByReference(`LABOUR-${id}`, manager);
+      await this.postPaymentJournal(updated, manager);
+      return repo.findOne({ where: { id }, relations: ['contractor'] });
+    });
   }
 
   async deletePayment(id: string) {
-    await this.paymentsRepo.delete(id);
-    return { deleted: true };
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(LabourPayment);
+      const payment = await repo.findOne({ where: { id } });
+      if (!payment) throw new NotFoundException('Payment not found');
+      await this.accounting.deleteJournalByReference(`LABOUR-${id}`, manager);
+      await repo.delete(id);
+      return { deleted: true };
+    });
   }
 }

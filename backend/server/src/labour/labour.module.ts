@@ -6,9 +6,13 @@ import { LabourPayment } from './entities/labour-payment.entity';
 import { LabourAdvance } from './entities/labour-advance.entity';
 import { LabourService } from './labour.service';
 import { LabourController } from './labour.controller';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([LabourContractor, LabourAttendance, LabourPayment, LabourAdvance])],
+  imports: [
+    TypeOrmModule.forFeature([LabourContractor, LabourAttendance, LabourPayment, LabourAdvance]),
+    AccountingModule,
+  ],
   controllers: [LabourController],
   providers: [LabourService],
   exports: [LabourService, TypeOrmModule],

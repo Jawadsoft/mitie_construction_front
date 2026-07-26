@@ -1,9 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { CashTransaction } from './entities/cash-transaction.entity';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
 import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
@@ -101,6 +99,47 @@ export class CashflowService {
     return rows;
   }
 
+  private async postCashJournal(
+    tx: CashTransaction,
+    manager?: EntityManager,
+  ) {
+    const cashId = await this.accounting.resolveBankAssetAccountId(null, manager);
+    const offset =
+      tx.type === 'IN'
+        ? await this.accounting.findAccountByCode('4100', manager)
+        : await this.accounting.findAccountByCode('5300', manager);
+    const amt = Number(tx.amount).toFixed(2);
+    const description = tx.description || (tx.type === 'IN' ? 'Cash inflow' : 'Cash outflow');
+    return this.accounting.createAndPostEntry(
+      {
+        entry: {
+          entry_date: tx.transaction_date,
+          reference_no: `CASH-${tx.id}`,
+          description,
+          project_id: tx.project_id || null,
+        },
+        lines:
+          tx.type === 'IN'
+            ? [
+                { account_id: cashId, dr_cr: 'DEBIT', amount: amt, narration: description },
+                { account_id: offset.id, dr_cr: 'CREDIT', amount: amt, narration: description },
+              ]
+            : [
+                { account_id: offset.id, dr_cr: 'DEBIT', amount: amt, narration: description },
+                { account_id: cashId, dr_cr: 'CREDIT', amount: amt, narration: description },
+              ],
+      },
+      manager,
+    );
+  }
+
+  private async clearCashJournal(tx: CashTransaction, manager?: EntityManager) {
+    await this.accounting.deleteJournalByReference(`CASH-${tx.id}`, manager);
+    if (tx.related_entity_id) {
+      await this.accounting.deleteJournalEntry(tx.related_entity_id, manager);
+    }
+  }
+
   async create(dto: Partial<CashTransaction>) {
     const amount = Number(dto.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -113,53 +152,73 @@ export class CashflowService {
       throw new BadRequestException('type must be IN or OUT');
     }
 
-    const cashId = await this.accounting.resolveBankAssetAccountId(null);
-    const offset =
-      dto.type === 'IN'
-        ? await this.accounting.findAccountByCode('4100')
-        : await this.accounting.findAccountByCode('5300');
-
     const amt = amount.toFixed(2);
-    const description = dto.description || (dto.type === 'IN' ? 'Cash inflow' : 'Cash outflow');
-
-    const je = await this.accounting.createAndPostEntry({
-      entry: {
-        entry_date: dto.transaction_date,
-        reference_no: dto.reference_no || null,
-        description,
-        project_id: dto.project_id || null,
-      },
-      lines:
-        dto.type === 'IN'
-          ? [
-              { account_id: cashId, dr_cr: 'DEBIT', amount: amt, narration: description },
-              { account_id: offset.id, dr_cr: 'CREDIT', amount: amt, narration: description },
-            ]
-          : [
-              { account_id: offset.id, dr_cr: 'DEBIT', amount: amt, narration: description },
-              { account_id: cashId, dr_cr: 'CREDIT', amount: amt, narration: description },
-            ],
+    return this.ds.transaction(async (manager) => {
+      const repo = manager.getRepository(CashTransaction);
+      const tx = await repo.save(
+        repo.create({
+          ...dto,
+          amount: amt,
+          method: dto.method || 'Cash',
+          related_entity_type: 'journal_entry',
+          related_entity_id: null,
+        }),
+      );
+      const je = await this.postCashJournal(tx, manager);
+      await repo.update(tx.id, { related_entity_id: je.id });
+      return repo.findOne({ where: { id: tx.id } });
     });
-
-    // Linked row (not shown separately in findAll — journal line is the source of truth)
-    return this.repo.save(
-      this.repo.create({
-        ...dto,
-        amount: amt,
-        related_entity_type: 'journal_entry',
-        related_entity_id: je.id,
-      }),
-    );
   }
 
   async update(id: string, dto: Partial<CashTransaction>) {
-    await this.repo.update(id, dto);
-    return this.repo.findOne({ where: { id } });
+    return this.ds.transaction(async (manager) => {
+      const repo = manager.getRepository(CashTransaction);
+      const existing = await repo.findOne({ where: { id } });
+      if (!existing) throw new BadRequestException('Cash transaction not found');
+
+      const nextType = dto.type !== undefined ? dto.type : existing.type;
+      if (nextType !== 'IN' && nextType !== 'OUT') {
+        throw new BadRequestException('type must be IN or OUT');
+      }
+      const nextAmount =
+        dto.amount !== undefined ? Number(dto.amount).toFixed(2) : existing.amount;
+      if (!(Number(nextAmount) > 0)) {
+        throw new BadRequestException('amount must be greater than 0');
+      }
+
+      await repo.update(id, {
+        ...(dto.project_id !== undefined ? { project_id: dto.project_id || null } : {}),
+        ...(dto.transaction_date !== undefined
+          ? { transaction_date: dto.transaction_date }
+          : {}),
+        type: nextType,
+        amount: nextAmount,
+        ...(dto.description !== undefined ? { description: dto.description || null } : {}),
+        ...(dto.reference_no !== undefined ? { reference_no: dto.reference_no || null } : {}),
+      });
+
+      const updated = await repo.findOne({ where: { id } });
+      if (!updated) throw new BadRequestException('Cash transaction not found');
+
+      await this.clearCashJournal(existing, manager);
+      const je = await this.postCashJournal(updated, manager);
+      await repo.update(id, {
+        related_entity_type: 'journal_entry',
+        related_entity_id: je.id,
+      });
+      return repo.findOne({ where: { id } });
+    });
   }
 
   async remove(id: string) {
-    await this.repo.delete(id);
-    return { deleted: true };
+    return this.ds.transaction(async (manager) => {
+      const repo = manager.getRepository(CashTransaction);
+      const tx = await repo.findOne({ where: { id } });
+      if (!tx) throw new BadRequestException('Cash transaction not found');
+      await this.clearCashJournal(tx, manager);
+      await repo.delete(id);
+      return { deleted: true };
+    });
   }
 
   async getSummary(from?: string, to?: string) {

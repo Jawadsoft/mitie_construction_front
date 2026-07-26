@@ -393,17 +393,23 @@ export class AccountingService implements OnModuleInit {
     return { deleted, reference_no };
   }
 
-  async deleteJournalEntry(id: string) {
-    const je = await this.jeRepo.findOne({ where: { id } });
-    if (!je) throw new NotFoundException('Journal entry not found');
-    await this.stmtRepo
+  async deleteJournalEntry(id: string, manager?: EntityManager) {
+    const jeRepo = manager ? manager.getRepository(JournalEntry) : this.jeRepo;
+    const jelRepo = manager ? manager.getRepository(JournalEntryLine) : this.jelRepo;
+    const stmtRepo = manager ? manager.getRepository(BankStatementLine) : this.stmtRepo;
+    const je = await jeRepo.findOne({ where: { id } });
+    if (!je) {
+      if (manager) return { deleted: false };
+      throw new NotFoundException('Journal entry not found');
+    }
+    await stmtRepo
       .createQueryBuilder()
       .update(BankStatementLine)
       .set({ journal_entry_id: null })
       .where('journal_entry_id = :id', { id })
       .execute();
-    await this.jelRepo.delete({ journal_entry_id: id });
-    await this.jeRepo.delete(id);
+    await jelRepo.delete({ journal_entry_id: id });
+    await jeRepo.delete(id);
     return { deleted: true };
   }
 
@@ -1112,6 +1118,50 @@ export class AccountingService implements OnModuleInit {
       default:
         return '4100';
     }
+  }
+
+  async postLabourPaymentJournal(
+    payment: {
+      id: string;
+      contractor_id: string;
+      project_id: string;
+      payment_date: string;
+      amount: string | number;
+      payment_method?: string | null;
+      notes?: string | null;
+      contractor_name?: string | null;
+    },
+    manager?: EntityManager,
+  ) {
+    const labourAcc = await this.findAccountByCode('5100', manager);
+    const cashId = await this.resolveBankAssetAccountId(null, manager);
+    const amount = Number(payment.amount).toFixed(2);
+    const who = payment.contractor_name || `contractor ${payment.contractor_id}`;
+    return this.createAndPostEntry(
+      {
+        entry: {
+          entry_date: payment.payment_date,
+          reference_no: `LABOUR-${payment.id}`,
+          description: payment.notes || `Labour payment: ${who}`,
+          project_id: payment.project_id || null,
+        },
+        lines: [
+          {
+            account_id: labourAcc.id,
+            dr_cr: 'DEBIT',
+            amount,
+            narration: payment.payment_method || 'Labour',
+          },
+          {
+            account_id: cashId,
+            dr_cr: 'CREDIT',
+            amount,
+            narration: payment.payment_method || 'Cash payment',
+          },
+        ],
+      },
+      manager,
+    );
   }
 
   async postFundReceiptJournal(

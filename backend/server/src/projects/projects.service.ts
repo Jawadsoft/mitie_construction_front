@@ -544,6 +544,105 @@ export class ProjectsService {
   async remove(id: string) {
     await this.findOne(id); // throws 404 if not found
 
+    // 0. Remove voucher journals by reference before deleting source rows
+    //    (covers journals with null project_id and FUND/LABOUR/CASH refs)
+    await this.dataSource.query(`
+      WITH refs AS (
+        SELECT 'EXP-' || e.id::text AS ref FROM expenses e WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'EXPPMT-' || ep.id::text FROM expense_payments ep
+          JOIN expenses e ON e.id = ep.expense_id WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'SALE-' || s.id::text FROM sales s
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'PMT-' || si.id::text FROM sale_installments si
+          JOIN sales s ON s.id = si.sale_id
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'FUND-' || ft.id::text FROM fund_transactions ft
+          JOIN fund_sources fs ON fs.id = ft.fund_source_id WHERE fs.project_id = $1
+        UNION ALL
+        SELECT 'LABOUR-' || lp.id::text FROM labour_payments lp WHERE lp.project_id = $1
+        UNION ALL
+        SELECT 'CASH-' || ct.id::text FROM cash_transactions ct WHERE ct.project_id = $1
+      ),
+      je AS (
+        SELECT je.id
+        FROM journal_entries je
+        WHERE je.project_id = $1
+           OR je.reference_no IN (SELECT ref FROM refs)
+           OR EXISTS (
+             SELECT 1 FROM refs r
+             WHERE je.reference_no = r.ref OR je.reference_no LIKE r.ref || '-%'
+           )
+      )
+      UPDATE bank_statement_lines SET journal_entry_id = NULL
+      WHERE journal_entry_id IN (SELECT id FROM je);
+    `, [id]);
+    await this.dataSource.query(`
+      WITH refs AS (
+        SELECT 'EXP-' || e.id::text AS ref FROM expenses e WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'EXPPMT-' || ep.id::text FROM expense_payments ep
+          JOIN expenses e ON e.id = ep.expense_id WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'SALE-' || s.id::text FROM sales s
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'PMT-' || si.id::text FROM sale_installments si
+          JOIN sales s ON s.id = si.sale_id
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'FUND-' || ft.id::text FROM fund_transactions ft
+          JOIN fund_sources fs ON fs.id = ft.fund_source_id WHERE fs.project_id = $1
+        UNION ALL
+        SELECT 'LABOUR-' || lp.id::text FROM labour_payments lp WHERE lp.project_id = $1
+        UNION ALL
+        SELECT 'CASH-' || ct.id::text FROM cash_transactions ct WHERE ct.project_id = $1
+      ),
+      je AS (
+        SELECT je.id
+        FROM journal_entries je
+        WHERE je.project_id = $1
+           OR je.reference_no IN (SELECT ref FROM refs)
+           OR EXISTS (
+             SELECT 1 FROM refs r
+             WHERE je.reference_no = r.ref OR je.reference_no LIKE r.ref || '-%'
+           )
+      )
+      DELETE FROM journal_entry_lines WHERE journal_entry_id IN (SELECT id FROM je);
+    `, [id]);
+    await this.dataSource.query(`
+      WITH refs AS (
+        SELECT 'EXP-' || e.id::text AS ref FROM expenses e WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'EXPPMT-' || ep.id::text FROM expense_payments ep
+          JOIN expenses e ON e.id = ep.expense_id WHERE e.project_id = $1
+        UNION ALL
+        SELECT 'SALE-' || s.id::text FROM sales s
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'PMT-' || si.id::text FROM sale_installments si
+          JOIN sales s ON s.id = si.sale_id
+          JOIN property_units pu ON pu.id = s.property_unit_id WHERE pu.project_id = $1
+        UNION ALL
+        SELECT 'FUND-' || ft.id::text FROM fund_transactions ft
+          JOIN fund_sources fs ON fs.id = ft.fund_source_id WHERE fs.project_id = $1
+        UNION ALL
+        SELECT 'LABOUR-' || lp.id::text FROM labour_payments lp WHERE lp.project_id = $1
+        UNION ALL
+        SELECT 'CASH-' || ct.id::text FROM cash_transactions ct WHERE ct.project_id = $1
+      )
+      DELETE FROM journal_entries je
+      WHERE je.project_id = $1
+         OR je.reference_no IN (SELECT ref FROM refs)
+         OR EXISTS (
+           SELECT 1 FROM refs r
+           WHERE je.reference_no = r.ref OR je.reference_no LIKE r.ref || '-%'
+         );
+    `, [id]);
+
     // 1. Sales chain: installments → sales (via property_units of this project)
     await this.dataSource.query(`
       DELETE FROM sale_installments WHERE sale_id IN (
@@ -573,20 +672,18 @@ export class ProjectsService {
     await this.dataSource.query(`DELETE FROM labour_payments WHERE project_id = $1`, [id]);
     await this.dataSource.query(`DELETE FROM labour_advances WHERE project_id = $1`, [id]);
 
-    // 5. Expenses & cashflow
+    // 5. Expenses, funds & cashflow
     await this.dataSource.query(`
       DELETE FROM expense_payments WHERE expense_id IN (
         SELECT id FROM expenses WHERE project_id = $1)`, [id]);
     await this.dataSource.query(`DELETE FROM expenses WHERE project_id = $1`, [id]);
+    await this.dataSource.query(`
+      DELETE FROM fund_transactions WHERE fund_source_id IN (
+        SELECT id FROM fund_sources WHERE project_id = $1)`, [id]);
+    await this.dataSource.query(`DELETE FROM fund_sources WHERE project_id = $1`, [id]);
     await this.dataSource.query(`DELETE FROM cash_transactions WHERE project_id = $1`, [id]);
 
-    // 6. Accounting
-    await this.dataSource.query(`
-      DELETE FROM journal_entry_lines WHERE journal_entry_id IN (
-        SELECT id FROM journal_entries WHERE project_id = $1)`, [id]);
-    await this.dataSource.query(`DELETE FROM journal_entries WHERE project_id = $1`, [id]);
-
-    // 7. Stage chain: progress + budgets → stages
+    // 6. Stage chain: progress + budgets → stages
     await this.dataSource.query(`
       DELETE FROM stage_progress WHERE project_stage_id IN (
         SELECT id FROM project_stages WHERE project_id = $1)`, [id]);
@@ -595,7 +692,7 @@ export class ProjectsService {
         SELECT id FROM project_stages WHERE project_id = $1)`, [id]);
     await this.dataSource.query(`DELETE FROM project_stages WHERE project_id = $1`, [id]);
 
-    // 8. Finally delete the project
+    // 7. Finally delete the project
     await this.projectsRepo.delete(id);
 
     return { message: 'Project and all related data deleted successfully' };

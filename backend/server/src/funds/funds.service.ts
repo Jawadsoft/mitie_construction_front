@@ -103,35 +103,71 @@ export class FundsService implements OnModuleInit {
   }
 
   async updateSource(id: string, dto: Partial<FundSource>) {
-    const existing = await this.findOneSource(id);
-    const next: Partial<FundSource> = {
-      ...dto,
-      project_id: dto.project_id !== undefined ? dto.project_id || null : undefined,
-      bank_account_id: dto.bank_account_id !== undefined ? dto.bank_account_id || null : undefined,
-      expected_date:
-        dto.expected_date !== undefined
-          ? dto.expected_date
-            ? this.toDateOnly(dto.expected_date) || null
-            : null
-          : undefined,
-    };
+    return this.dataSource.transaction(async (manager) => {
+      const sourcesRepo = manager.getRepository(FundSource);
+      const txRepo = manager.getRepository(FundTransaction);
+      const existing = await sourcesRepo.findOne({ where: { id } });
+      if (!existing) throw new NotFoundException('Fund source not found');
 
-    if (dto.status === 'Cancelled') {
-      next.status = 'Cancelled';
-    } else if (dto.status != null && dto.status !== 'Cancelled') {
-      // Reactivate or explicit non-cancel → recompute from balances
-      const committed = dto.total_committed ?? existing.total_committed;
-      const received = existing.received_so_far;
-      next.status = this.computeStatus(committed, received, null);
-    }
+      const next: Partial<FundSource> = {
+        ...dto,
+        project_id: dto.project_id !== undefined ? dto.project_id || null : undefined,
+        bank_account_id: dto.bank_account_id !== undefined ? dto.bank_account_id || null : undefined,
+        expected_date:
+          dto.expected_date !== undefined
+            ? dto.expected_date
+              ? this.toDateOnly(dto.expected_date) || null
+              : null
+            : undefined,
+      };
 
-    await this.sourcesRepo.update(id, next as Partial<FundSource>);
-    const updated = await this.findOneSource(id);
-    if (updated.status !== 'Cancelled') {
-      await this.refreshSourceStatus(id);
-      return this.findOneSource(id);
-    }
-    return updated;
+      if (dto.status === 'Cancelled') {
+        next.status = 'Cancelled';
+      } else if (dto.status != null && dto.status !== 'Cancelled') {
+        const committed = dto.total_committed ?? existing.total_committed;
+        const received = existing.received_so_far;
+        next.status = this.computeStatus(committed, received, null);
+      }
+
+      await sourcesRepo.update(id, next as Partial<FundSource>);
+      let updated = await sourcesRepo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Fund source not found');
+
+      if (updated.status !== 'Cancelled') {
+        await this.refreshSourceStatus(id, manager);
+        updated = await sourcesRepo.findOne({ where: { id } });
+        if (!updated) throw new NotFoundException('Fund source not found');
+      }
+
+      // Rebuild FUND-* when bank/project/type/name change so GL matches the source
+      const glAffecting =
+        String(updated.bank_account_id ?? '') !== String(existing.bank_account_id ?? '') ||
+        String(updated.project_id ?? '') !== String(existing.project_id ?? '') ||
+        updated.source_type !== existing.source_type ||
+        updated.source_name !== existing.source_name;
+      if (glAffecting) {
+        const txs = await txRepo.find({ where: { fund_source_id: id } });
+        for (const ft of txs) {
+          const transaction_date = this.toDateOnly(ft.transaction_date)!;
+          await this.accounting.deleteJournalByReference(`FUND-${ft.id}`, manager);
+          await this.accounting.postFundReceiptJournal(
+            {
+              fund_transaction_id: ft.id,
+              fund_source_id: updated.id,
+              source_name: updated.source_name,
+              source_type: updated.source_type,
+              bank_account_id: updated.bank_account_id,
+              project_id: updated.project_id,
+              transaction_date,
+              amount: ft.amount,
+            },
+            manager,
+          );
+        }
+      }
+
+      return updated;
+    });
   }
 
   /**
@@ -203,8 +239,20 @@ export class FundsService implements OnModuleInit {
   }
 
   async deleteSource(id: string) {
-    await this.sourcesRepo.delete(id);
-    return { deleted: true };
+    return this.dataSource.transaction(async (manager) => {
+      const sourcesRepo = manager.getRepository(FundSource);
+      const txRepo = manager.getRepository(FundTransaction);
+      const source = await sourcesRepo.findOne({ where: { id } });
+      if (!source) throw new NotFoundException('Fund source not found');
+
+      const txs = await txRepo.find({ where: { fund_source_id: id } });
+      for (const ft of txs) {
+        await this.accounting.deleteJournalByReference(`FUND-${ft.id}`, manager);
+      }
+      await txRepo.delete({ fund_source_id: id });
+      await sourcesRepo.delete(id);
+      return { deleted: true };
+    });
   }
 
   private toDateOnly(value: string | Date | null | undefined): string | undefined {
