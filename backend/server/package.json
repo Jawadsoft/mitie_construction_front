@@ -15,6 +15,7 @@
     "fix:cash-bank-parent": "node scripts/fix-parent-cash-bank-entries.js",
     "rebuild:vouchers": "node scripts/rebuild-voucher-journals.js",
     "rebuild:vouchers:apply": "node scripts/rebuild-voucher-journals.js --apply",
+    "assign:collection-banks": "node scripts/assign-collection-banks.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
