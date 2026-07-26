@@ -266,6 +266,31 @@ export class AccountingService implements OnModuleInit {
     return { deleted: true, reference_no, id: je.id };
   }
 
+  /** Delete all journals matching exact ref or ref with suffix (e.g. PMT-12, PMT-12-171...). */
+  async deleteJournalsByReferencePrefix(reference_no: string, manager?: EntityManager) {
+    const jeRepo = manager ? manager.getRepository(JournalEntry) : this.jeRepo;
+    const jelRepo = manager ? manager.getRepository(JournalEntryLine) : this.jelRepo;
+    const stmtRepo = manager ? manager.getRepository(BankStatementLine) : this.stmtRepo;
+    const rows = await jeRepo
+      .createQueryBuilder('je')
+      .where('je.reference_no = :ref', { ref: reference_no })
+      .orWhere('je.reference_no LIKE :pfx', { pfx: `${reference_no}-%` })
+      .getMany();
+    let deleted = 0;
+    for (const je of rows) {
+      await stmtRepo
+        .createQueryBuilder()
+        .update(BankStatementLine)
+        .set({ journal_entry_id: null })
+        .where('journal_entry_id = :id', { id: je.id })
+        .execute();
+      await jelRepo.delete({ journal_entry_id: je.id });
+      await jeRepo.delete(je.id);
+      deleted += 1;
+    }
+    return { deleted, reference_no };
+  }
+
   async deleteJournalEntry(id: string) {
     const je = await this.jeRepo.findOne({ where: { id } });
     if (!je) throw new NotFoundException('Journal entry not found');
@@ -430,22 +455,40 @@ export class AccountingService implements OnModuleInit {
   async postSalePaymentJournal(
     sale: Sale,
     paidAmount: string | number,
-    meta: { installment_id: string; paid_date: string; project_id?: string | null },
+    meta: {
+      installment_id: string;
+      paid_date: string;
+      project_id?: string | null;
+      bank_account_id?: string | null;
+    },
     manager?: EntityManager,
   ) {
-    const cash = await this.findAccountByCode('1000', manager);
+    const debitAccountId = await this.resolveBankAssetAccountId(
+      meta.bank_account_id,
+      manager,
+    );
     const ar = await this.findAccountByCode('1100', manager);
     const amount = Number(paidAmount).toFixed(2);
+
+    let debitNarration = 'Cash received';
+    if (meta.bank_account_id) {
+      const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+      const bank = await bankRepo.findOne({ where: { id: meta.bank_account_id } });
+      if (bank) {
+        debitNarration = `Bank: ${bank.bank_name || bank.name}`;
+      }
+    }
+
     return this.createAndPostEntry(
       {
         entry: {
           entry_date: meta.paid_date,
-          reference_no: `PMT-${meta.installment_id}`,
+          reference_no: `PMT-${meta.installment_id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           description: `Sale payment for sale ${sale.id}`,
           project_id: meta.project_id || null,
         },
         lines: [
-          { account_id: cash.id, dr_cr: 'DEBIT', amount, narration: 'Cash received' },
+          { account_id: debitAccountId, dr_cr: 'DEBIT', amount, narration: debitNarration },
           { account_id: ar.id, dr_cr: 'CREDIT', amount, narration: 'AR reduction' },
         ],
       },

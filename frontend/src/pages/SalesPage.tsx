@@ -2,19 +2,29 @@ import { useEffect, useState } from 'react';
 import {
   getCustomers, createCustomer, updateCustomer, deleteCustomer,
   getPropertyUnits, createPropertyUnit, updatePropertyUnit, deletePropertyUnit,
-  getSales, getSale, createSale, deleteSale, getInstallments, recordPayment
+  getSales, getSale, createSale, deleteSale, collectSalePayment, adjustSaleCollection
 } from '../api/sales';
-import type { Customer, PropertyUnit, Sale, SaleInstallment } from '../api/sales';
+import type { Customer, PropertyUnit, Sale } from '../api/sales';
 import { exportCSV } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
+import { getBankAccounts } from '../api/accounting';
+import type { BankAccount } from '../api/accounting';
 import Modal from '../components/Modal';
 import StatCard from '../components/StatCard';
 import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../components/DetailDrawer';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
+import { formatDate } from '../utils/date';
 
-type Tab = 'inventory' | 'sales' | 'customers' | 'receivables';
+function bankLabel(b: BankAccount) {
+  if (b.bank_name && b.name && b.bank_name.toLowerCase() !== b.name.toLowerCase()) {
+    return `${b.bank_name} — ${b.name}`;
+  }
+  return b.name || b.bank_name || `Bank #${b.id}`;
+}
+
+type Tab = 'inventory' | 'sales' | 'customers' | 'collections';
 
 const STATUS_COLORS: Record<string, string> = {
   Available: 'bg-green-100 text-green-700',
@@ -36,12 +46,13 @@ export default function SalesPage() {
   const [units, setUnits] = useState<PropertyUnit[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [installments, setInstallments] = useState<SaleInstallment[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [banks, setBanks] = useState<BankAccount[]>([]);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [showModal, setShowModal] = useState<string>('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [collecting, setCollecting] = useState(false);
 
   const [editingUnit, setEditingUnit] = useState<PropertyUnit | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -64,15 +75,40 @@ export default function SalesPage() {
   const [custForm, setCustForm] = useState({ name: '', phone: '', email: '', cnic: '', address: '' });
   const [saleForm, setSaleForm] = useState({ property_unit_id: '', customer_id: '', sale_date: new Date().toISOString().split('T')[0], total_sale_price: '', notes: '' });
   const [installForms, setInstallForms] = useState([{ due_date: '', due_amount: '' }]);
-  const [payForm, setPayForm] = useState({ installment_id: '', paid_amount: '', paid_date: new Date().toISOString().split('T')[0] });
+  const [payForm, setPayForm] = useState({
+    sale_id: '',
+    paid_amount: '',
+    paid_date: new Date().toISOString().split('T')[0],
+    bank_account_id: '',
+  });
+  const [editForm, setEditForm] = useState({
+    sale_id: '',
+    total_collected: '',
+    paid_date: new Date().toISOString().split('T')[0],
+    bank_account_id: '',
+    max: 0,
+  });
 
   const load = async () => {
     setLoading(true);
     try {
-      const [u, s, c, i, p] = await Promise.all([getPropertyUnits(), getSales(), getCustomers(), getInstallments(undefined, 'Pending'), getProjects()]);
-      setUnits(u); setSales(s); setCustomers(c); setInstallments(i); setProjects(p);
-    } catch (e: any) { setError(e.message); }
-    finally { setLoading(false); }
+      const [u, s, c, p, b] = await Promise.all([
+        getPropertyUnits(),
+        getSales(),
+        getCustomers(),
+        getProjects(),
+        getBankAccounts(),
+      ]);
+      setUnits(u);
+      setSales(s);
+      setCustomers(c);
+      setProjects(p);
+      setBanks(b);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -147,11 +183,29 @@ export default function SalesPage() {
     }
   };
 
-  const handleExportReceivables = () => {
-    exportCSV('receivables', installments.map(i => ({
-      'Due Date': i.due_date, 'Due Amount': i.due_amount, 'Paid': i.paid_amount,
-      'Balance': (Number(i.due_amount) - Number(i.paid_amount)).toString(), Status: i.status,
-    })));
+  const outstandingSales = sales.filter(
+    (s) =>
+      s.status !== 'Cancelled' &&
+      Number(s.total_sale_price) - Number(s.total_paid) > 0.009,
+  );
+  const collectedSales = sales.filter(
+    (s) => s.status !== 'Cancelled' && Number(s.total_paid) > 0.009,
+  );
+
+  const handleExportCollections = () => {
+    exportCSV(
+      'collections',
+      outstandingSales.map((s) => ({
+        'Sale#': s.id,
+        Customer: s.customer?.name ?? '',
+        Unit: s.property_unit?.unit_number ?? '',
+        Date: s.sale_date,
+        'Sale Price': s.total_sale_price,
+        Collected: s.total_paid,
+        Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toFixed(2),
+        Status: s.status,
+      })),
+    );
   };
 
   const handleExportSalesCSV = () => {
@@ -168,13 +222,98 @@ export default function SalesPage() {
     try {
       await createSale({ sale: saleForm as any, installments: installForms.filter(i => i.due_date && i.due_amount) as any });
       setShowModal(''); load();
+      notify.success('Sale created');
     } catch (e: any) { setError(e.message); }
   };
 
-  const handlePayment = async () => {
-    if (!payForm.installment_id || !payForm.paid_amount) { setError('Select installment and amount'); return; }
+  const openCollect = (sale?: Sale) => {
+    const target = sale ?? outstandingSales[0];
+    const balance = target
+      ? Math.max(0, Number(target.total_sale_price) - Number(target.total_paid))
+      : 0;
+    setPayForm({
+      sale_id: target?.id ?? '',
+      paid_amount: balance ? String(balance) : '',
+      paid_date: new Date().toISOString().split('T')[0],
+      bank_account_id: banks[0]?.id ?? '',
+    });
     setError('');
-    try { await recordPayment(payForm.installment_id, payForm.paid_amount, payForm.paid_date); setShowModal(''); load(); } catch (e: any) { setError(e.message); }
+    setShowModal('payment');
+  };
+
+  const openEditCollection = (sale: Sale) => {
+    setEditForm({
+      sale_id: sale.id,
+      total_collected: String(Number(sale.total_paid)),
+      paid_date: new Date().toISOString().split('T')[0],
+      bank_account_id: banks[0]?.id ?? '',
+      max: Number(sale.total_sale_price),
+    });
+    setError('');
+    setShowModal('edit-collection');
+  };
+
+  const handlePayment = async () => {
+    if (!payForm.sale_id || !payForm.paid_amount) {
+      setError('Select a sale and enter amount');
+      return;
+    }
+    setError('');
+    setCollecting(true);
+    try {
+      const updated = await collectSalePayment(
+        payForm.sale_id,
+        payForm.paid_amount,
+        payForm.paid_date,
+        payForm.bank_account_id || null,
+      );
+      setShowModal('');
+      notify.success('Collection recorded');
+      if (selectedSale?.id === payForm.sale_id) {
+        setSelectedSale(updated);
+      }
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setCollecting(false);
+    }
+  };
+
+  const handleEditCollection = async () => {
+    if (!editForm.sale_id || editForm.total_collected === '') {
+      setError('Enter the new collected amount');
+      return;
+    }
+    const amount = Number(editForm.total_collected);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError('Collected amount must be zero or more');
+      return;
+    }
+    if (amount > editForm.max + 0.009) {
+      setError(`Cannot exceed sale price (PKR ${editForm.max.toLocaleString()})`);
+      return;
+    }
+    setError('');
+    setCollecting(true);
+    try {
+      const updated = await adjustSaleCollection(
+        editForm.sale_id,
+        String(amount),
+        editForm.paid_date,
+        editForm.bank_account_id || null,
+      );
+      setShowModal('');
+      notify.success('Collection updated');
+      if (selectedSale?.id === editForm.sale_id) {
+        setSelectedSale(updated);
+      }
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setCollecting(false);
+    }
   };
 
   const viewSale = async (id: string) => {
@@ -182,24 +321,50 @@ export default function SalesPage() {
   };
 
   const totalRevenue = sales.reduce((s, sale) => s + Number(sale.total_paid), 0);
-  const pendingReceivables = installments.reduce((s, i) => s + (Number(i.due_amount) - Number(i.paid_amount)), 0);
+  const pendingReceivables = outstandingSales.reduce(
+    (s, sale) => s + (Number(sale.total_sale_price) - Number(sale.total_paid)),
+    0,
+  );
 
   if (selectedSale) {
+    const saleBalance =
+      Number(selectedSale.total_sale_price) - Number(selectedSale.total_paid);
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button onClick={() => setSelectedSale(null)} className="text-blue-600 hover:underline text-sm">← Back</button>
           <h1 className="text-xl font-bold text-gray-800">Sale #{selectedSale.id}</h1>
           <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLORS[selectedSale.status]}`}>{selectedSale.status}</span>
+          <div className="ml-auto flex gap-2">
+            {Number(selectedSale.total_paid) > 0.009 && selectedSale.status !== 'Cancelled' && (
+              <button
+                type="button"
+                onClick={() => openEditCollection(selectedSale)}
+                className="text-xs rounded border border-blue-200 text-blue-700 px-3 py-1.5 hover:bg-blue-50"
+              >
+                Edit Collection
+              </button>
+            )}
+            {saleBalance > 0.009 && selectedSale.status !== 'Cancelled' && (
+              <button
+                type="button"
+                onClick={() => openCollect(selectedSale)}
+                className="text-xs rounded bg-green-600 text-white px-3 py-1.5 hover:bg-green-700"
+              >
+                Collect
+              </button>
+            )}
+          </div>
         </div>
         <div className="bg-white rounded-xl border p-4 grid grid-cols-2 gap-3 text-sm">
           <div><span className="text-gray-500">Customer:</span> <span className="font-medium ml-1">{selectedSale.customer?.name}</span></div>
           <div><span className="text-gray-500">Unit:</span> <span className="font-medium ml-1">{selectedSale.property_unit?.unit_number}</span></div>
           <div><span className="text-gray-500">Sale Price:</span> <span className="font-medium ml-1">PKR {Number(selectedSale.total_sale_price).toLocaleString()}</span></div>
-          <div><span className="text-gray-500">Paid:</span> <span className="font-medium ml-1 text-green-600">PKR {Number(selectedSale.total_paid).toLocaleString()}</span></div>
-          <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{selectedSale.sale_date}</span></div>
+          <div><span className="text-gray-500">Collected:</span> <span className="font-medium ml-1 text-green-600">PKR {Number(selectedSale.total_paid).toLocaleString()}</span></div>
+          <div><span className="text-gray-500">Balance Due:</span> <span className="font-medium ml-1 text-red-600">PKR {saleBalance.toLocaleString()}</span></div>
+          <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{formatDate(selectedSale.sale_date)}</span></div>
         </div>
-        <h2 className="font-semibold text-gray-800">Installments</h2>
+        <h2 className="font-semibold text-gray-800">Installment schedule (auto-applied on collect)</h2>
         <div className="bg-white rounded-xl border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
@@ -213,7 +378,7 @@ export default function SalesPage() {
             <tbody>
               {(selectedSale.installments ?? []).map(i => (
                 <tr key={i.id} className="border-t hover:bg-gray-50">
-                  <td className="px-4 py-3">{i.due_date}</td>
+                  <td className="px-4 py-3">{formatDate(i.due_date)}</td>
                   <td className="px-4 py-3 text-right font-mono">{Number(i.due_amount).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right font-mono text-green-600">{Number(i.paid_amount).toLocaleString()}</td>
                   <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[i.status]}`}>{i.status}</span></td>
@@ -222,6 +387,86 @@ export default function SalesPage() {
             </tbody>
           </table>
         </div>
+
+        {showModal === 'payment' && (
+          <Modal title="Collect against Sale" onClose={() => { if (!collecting) setShowModal(''); }}>
+            <div className="space-y-3">
+              {error && <p className="text-red-600 text-sm">{error}</p>}
+              <p className="text-sm text-slate-600">
+                Sale S-{selectedSale.id.slice(-6).toUpperCase()} · Balance PKR {saleBalance.toLocaleString()}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Collection Date</label>
+                  <input type="date" value={payForm.paid_date} onChange={e => setPayForm(f => ({ ...f, paid_date: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+                  <input type="number" value={payForm.paid_amount} onChange={e => setPayForm(f => ({ ...f, paid_amount: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to (Cash & Bank) *</label>
+                <select
+                  value={payForm.bank_account_id}
+                  onChange={(e) => setPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Cash on hand (1000)</option>
+                  {banks.map((b) => (
+                    <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={handlePayment} disabled={collecting}
+                className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                {collecting ? 'Saving…' : 'Record Collection'}
+              </button>
+            </div>
+          </Modal>
+        )}
+
+        {showModal === 'edit-collection' && (
+          <Modal title="Edit Collection" onClose={() => { if (!collecting) setShowModal(''); }}>
+            <div className="space-y-3">
+              {error && <p className="text-red-600 text-sm">{error}</p>}
+              <p className="text-xs text-slate-500">
+                Change the total collected for this sale. Old payment journals are removed and rebuilt.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Total collected (PKR) *</label>
+                <input type="number" min={0} max={editForm.max} value={editForm.total_collected}
+                  onChange={(e) => setEditForm((f) => ({ ...f, total_collected: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Effective date</label>
+                <input type="date" value={editForm.paid_date}
+                  onChange={(e) => setEditForm((f) => ({ ...f, paid_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to (Cash & Bank)</label>
+                <select
+                  value={editForm.bank_account_id}
+                  onChange={(e) => setEditForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Cash on hand (1000)</option>
+                  {banks.map((b) => (
+                    <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={handleEditCollection} disabled={collecting}
+                className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                {collecting ? 'Updating…' : 'Save Collection Changes'}
+              </button>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -230,29 +475,28 @@ export default function SalesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Sales & Receivables</h1>
-          <p className="text-sm text-gray-500">Property inventory, sales, and collections</p>
+          <h1 className="text-2xl font-bold text-gray-800">Sales & Collections</h1>
+          <p className="text-sm text-gray-500">Property inventory, sales, and installment collections</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {(tab === 'sales' || tab === 'receivables') && <>
-            <button onClick={tab === 'sales' ? handleExportSalesCSV : handleExportReceivables} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
+          {(tab === 'sales' || tab === 'collections') && <>
+            <button onClick={tab === 'sales' ? handleExportSalesCSV : handleExportCollections} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
           </>}
           {tab === 'inventory' && <button onClick={() => { setEditingUnit(null); setUnitForm({ project_id: '', unit_number: '', unit_type: '', area_sqft: '', floor: '', list_price: '', notes: '' }); setError(''); setShowModal('unit'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Unit</button>}
           {tab === 'customers' && <button onClick={() => { setEditingCustomer(null); setCustForm({ name: '', phone: '', email: '', cnic: '', address: '' }); setError(''); setShowModal('customer'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Customer</button>}
           {tab === 'sales' && <button onClick={() => { setError(''); setShowModal('sale'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ New Sale</button>}
-          {tab === 'receivables' && <button onClick={() => { setError(''); setShowModal('payment'); }} className="bg-green-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Record Payment</button>}
         </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Revenue" value={`PKR ${totalRevenue.toLocaleString()}`} icon="💰" color="green" />
-        <StatCard title="Pending Receivables" value={`PKR ${pendingReceivables.toLocaleString()}`} icon="⏳" color="yellow" />
+        <StatCard title="Total Collected" value={`PKR ${totalRevenue.toLocaleString()}`} icon="💰" color="green" />
+        <StatCard title="Pending against Sales" value={`PKR ${pendingReceivables.toLocaleString()}`} icon="⏳" color="yellow" />
         <StatCard title="Total Units" value={units.length} icon="🏠" color="blue" />
         <StatCard title="Sold Units" value={units.filter(u => u.status === 'Sold').length} icon="✅" color="purple" />
       </div>
 
       <div className="flex gap-2 border-b overflow-x-auto">
-        {([['inventory', '🏘️ Inventory'], ['sales', '📄 Sales'], ['customers', '👥 Customers'], ['receivables', '💵 Receivables']] as [Tab, string][]).map(([id, label]) => (
+        {([['inventory', '🏘️ Inventory'], ['sales', '📄 Sales'], ['customers', '👥 Customers'], ['collections', '💵 Collections']] as [Tab, string][]).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {label}
@@ -329,7 +573,7 @@ export default function SalesPage() {
                     <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
                     <td className="px-4 py-3">{s.customer?.name ?? '-'}</td>
                     <td className="px-4 py-3">{s.property_unit?.unit_number ?? '-'}</td>
-                    <td className="px-4 py-3">{s.sale_date}</td>
+                    <td className="px-4 py-3">{formatDate(s.sale_date)}</td>
                     <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
                     <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
                     <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[s.status]}`}>{s.status}</span></td>
@@ -343,32 +587,130 @@ export default function SalesPage() {
           </div>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-gray-600">Due Date</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Due (PKR)</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Paid (PKR)</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Balance</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {installments.length === 0 ? (
-                  <tr><td colSpan={5} className="text-center text-gray-400 py-8">No pending receivables.</td></tr>
-                ) : installments.map(i => (
-                  <tr key={i.id} className="border-t hover:bg-gray-50">
-                    <td className="px-4 py-3">{i.due_date}</td>
-                    <td className="px-4 py-3 text-right font-mono">{Number(i.due_amount).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-mono text-green-600">{Number(i.paid_amount).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-mono text-red-600">{(Number(i.due_amount) - Number(i.paid_amount)).toLocaleString()}</td>
-                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[i.status]}`}>{i.status}</span></td>
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border overflow-hidden">
+            <div className="px-4 py-3 border-b bg-slate-50">
+              <p className="text-sm font-medium text-slate-800">Due for collection</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Outstanding sale balances — use Collect to receive payment against a sale.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-gray-600">Sale</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Customer</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Unit</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Sale Date</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Sale Price</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Collected</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Balance Due</th>
+                    <th className="px-4 py-3 text-center text-gray-600">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {outstandingSales.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center text-gray-400 py-8">
+                        No outstanding sales to collect against.
+                      </td>
+                    </tr>
+                  ) : (
+                    outstandingSales.map((s) => {
+                      const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                      return (
+                        <tr key={s.id} className="border-t hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
+                          <td className="px-4 py-3">{s.customer?.name ?? '—'}</td>
+                          <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
+                          <td className="px-4 py-3">{formatDate(s.sale_date)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-red-600 font-medium">{balance.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="inline-flex gap-1.5">
+                              {Number(s.total_paid) > 0.009 && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditCollection(s)}
+                                  className="text-xs rounded border border-blue-200 text-blue-700 px-2.5 py-1.5 hover:bg-blue-50"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openCollect(s)}
+                                className="text-xs rounded bg-green-600 text-white px-2.5 py-1.5 hover:bg-green-700"
+                              >
+                                Collect
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border overflow-hidden">
+            <div className="px-4 py-3 border-b bg-slate-50">
+              <p className="text-sm font-medium text-slate-800">Recorded collections</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Sales with money already collected — Edit to change the total collected amount.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-gray-600">Sale</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Customer</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Unit</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Sale Price</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Collected</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Balance</th>
+                    <th className="px-4 py-3 text-center text-gray-600">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {collectedSales.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center text-gray-400 py-8">
+                        No collections recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    collectedSales.map((s) => {
+                      const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                      return (
+                        <tr key={s.id} className="border-t hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
+                          <td className="px-4 py-3">{s.customer?.name ?? '—'}</td>
+                          <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-red-600">{balance.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => openEditCollection(s)}
+                              className="text-xs rounded border border-blue-200 text-blue-700 px-3 py-1.5 hover:bg-blue-50"
+                            >
+                              Edit Collection
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -474,20 +816,41 @@ export default function SalesPage() {
       )}
 
       {showModal === 'payment' && (
-        <Modal title="Record Payment" onClose={() => setShowModal('')}>
+        <Modal title="Collect against Sale" onClose={() => { if (!collecting) setShowModal(''); }}>
           <div className="space-y-3">
             {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Installment *</label>
-              <select value={payForm.installment_id} onChange={e => setPayForm(f => ({ ...f, installment_id: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                <option value="">-- Select --</option>
-                {installments.map(i => <option key={i.id} value={i.id}>#{i.id} – Due {i.due_date} – PKR {Number(i.due_amount).toLocaleString()}</option>)}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Sale *</label>
+              <select
+                value={payForm.sale_id}
+                onChange={(e) => {
+                  const sale = outstandingSales.find((s) => s.id === e.target.value);
+                  const balance = sale
+                    ? Math.max(0, Number(sale.total_sale_price) - Number(sale.total_paid))
+                    : 0;
+                  setPayForm((f) => ({
+                    ...f,
+                    sale_id: e.target.value,
+                    paid_amount: balance ? String(balance) : '',
+                  }));
+                }}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <option value="">-- Select sale --</option>
+                {outstandingSales.map((s) => {
+                  const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                  return (
+                    <option key={s.id} value={s.id}>
+                      S-{s.id.slice(-6).toUpperCase()} · {s.customer?.name ?? 'Customer'} · Unit{' '}
+                      {s.property_unit?.unit_number ?? '—'} · Due PKR {balance.toLocaleString()}
+                    </option>
+                  );
+                })}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Paid Date</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Collection Date</label>
                 <input type="date" value={payForm.paid_date} onChange={e => setPayForm(f => ({ ...f, paid_date: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
@@ -497,7 +860,82 @@ export default function SalesPage() {
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
             </div>
-            <button onClick={handlePayment} className="w-full bg-green-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-green-700">Record Payment</button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to (Cash & Bank) *</label>
+              <select
+                value={payForm.bank_account_id}
+                onChange={(e) => setPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <option value="">Cash on hand (1000)</option>
+                {banks.map((b) => (
+                  <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-400 mt-1">Posts debit to the selected sub-account under Cash & Bank.</p>
+            </div>
+            <button
+              onClick={handlePayment}
+              disabled={collecting}
+              className="w-full bg-green-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {collecting ? 'Saving…' : 'Record Collection'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showModal === 'edit-collection' && (
+        <Modal title="Edit Collection" onClose={() => { if (!collecting) setShowModal(''); }}>
+          <div className="space-y-3">
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+            <p className="text-xs text-slate-500">
+              Set the new <strong>total collected</strong> for this sale. Payment journals are rebuilt
+              (old PMT entries removed, new ones posted for the updated amount).
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Total collected (PKR) *</label>
+              <input
+                type="number"
+                min={0}
+                max={editForm.max}
+                value={editForm.total_collected}
+                onChange={(e) => setEditForm((f) => ({ ...f, total_collected: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Max sale price: PKR {editForm.max.toLocaleString()}. Use 0 to clear all collections.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Effective date</label>
+              <input
+                type="date"
+                value={editForm.paid_date}
+                onChange={(e) => setEditForm((f) => ({ ...f, paid_date: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to (Cash & Bank)</label>
+              <select
+                value={editForm.bank_account_id}
+                onChange={(e) => setEditForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <option value="">Cash on hand (1000)</option>
+                {banks.map((b) => (
+                  <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleEditCollection}
+              disabled={collecting}
+              className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {collecting ? 'Updating…' : 'Save Collection Changes'}
+            </button>
           </div>
         </Modal>
       )}

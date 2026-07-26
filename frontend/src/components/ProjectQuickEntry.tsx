@@ -82,6 +82,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     sale_id: '',
     paid_amount: '',
     paid_date: today(),
+    bank_account_id: '',
   });
 
   const [paymentForm, setPaymentForm] = useState({
@@ -110,9 +111,14 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
             bank_account_id: bankList[0]?.id ?? '',
           }));
         } else if (kind === 'collection') {
-          const sales = await getSales(project.id);
+          const [sales, bankList] = await Promise.all([getSales(project.id), getBankAccounts()]);
           const details = await Promise.all(sales.map((s) => getSale(s.id)));
           if (cancelled) return;
+          setBanks(bankList);
+          setCollectionForm((f) => ({
+            ...f,
+            bank_account_id: bankList[0]?.id ?? '',
+          }));
           const rows: PendingInstallment[] = [];
           const salesOpen: OpenSale[] = [];
           for (const sale of details) {
@@ -245,6 +251,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
           collectionForm.installment_id,
           collectionForm.paid_amount,
           collectionForm.paid_date,
+          collectionForm.bank_account_id || null,
         );
         notify.success('Collection recorded');
         onSaved();
@@ -273,6 +280,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
         collectionForm.sale_id,
         collectionForm.paid_amount,
         collectionForm.paid_date,
+        collectionForm.bank_account_id || null,
       );
       notify.success('Full collection recorded');
       onSaved();
@@ -632,6 +640,26 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
                           className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">
+                        Deposit to (Cash & Bank)
+                      </label>
+                      <select
+                        value={collectionForm.bank_account_id}
+                        onChange={(e) => setCollectionForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                      >
+                        <option value="">Cash on hand (1000)</option>
+                        {banks.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {[b.bank_name, b.name].filter(Boolean).join(' — ') || `Bank #${b.id}`}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Journal debit posts to this sub-account under Cash & Bank (e.g. Jawad, Faysal).
+                      </p>
                     </div>
                     <button
                       type="button"

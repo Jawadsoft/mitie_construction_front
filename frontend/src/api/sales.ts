@@ -157,10 +157,19 @@ export async function deleteSale(id: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete sale');
 }
 
-export async function recordPayment(installment_id: string, paid_amount: string, paid_date: string): Promise<SaleInstallment> {
+export async function recordPayment(
+  installment_id: string,
+  paid_amount: string,
+  paid_date: string,
+  bank_account_id?: string | null,
+): Promise<SaleInstallment> {
   const res = await fetch(`${BASE}/installments/${installment_id}/pay`, {
     method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paid_amount, paid_date }),
+    body: JSON.stringify({
+      paid_amount,
+      paid_date,
+      bank_account_id: bank_account_id || null,
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -174,16 +183,48 @@ export async function collectSalePayment(
   saleId: string,
   paid_amount: string,
   paid_date: string,
+  bank_account_id?: string | null,
 ): Promise<Sale> {
   const res = await fetch(`${BASE}/list/${saleId}/collect`, {
     method: 'POST',
     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paid_amount, paid_date }),
+    body: JSON.stringify({
+      paid_amount,
+      paid_date,
+      bank_account_id: bank_account_id || null,
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(
       Array.isArray(body.message) ? body.message.join(', ') : body.message || 'Failed to record collection',
+    );
+  }
+  return res.json();
+}
+
+/** Replace total collected on a sale (rebuilds payment journals). */
+export async function adjustSaleCollection(
+  saleId: string,
+  total_collected: string,
+  paid_date: string,
+  bank_account_id?: string | null,
+): Promise<Sale> {
+  const res = await fetch(`${BASE}/list/${saleId}/collection`, {
+    method: 'PATCH',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      total_collected,
+      paid_date,
+      bank_account_id: bank_account_id || null,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      Array.isArray(body.message)
+        ? body.message.join(', ')
+        : body.message || 'Failed to update collection',
     );
   }
   return res.json();

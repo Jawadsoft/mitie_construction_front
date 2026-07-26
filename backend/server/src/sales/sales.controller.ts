@@ -25,6 +25,9 @@ export class SalesController {
   @Post('list/:id/collect') collectOnSale(@Param('id') id: string, @Body() dto: any) {
     return this.svc.collectOnSale(id, dto);
   }
+  @Patch('list/:id/collection') adjustCollection(@Param('id') id: string, @Body() dto: any) {
+    return this.svc.adjustSaleCollection(id, dto);
+  }
   @Patch('list/:id') updateSale(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSale(id, dto); }
   @Delete('list/:id') deleteSale(@Param('id') id: string) { return this.svc.deleteSale(id); }
 
@@ -32,6 +35,11 @@ export class SalesController {
     return this.svc.findInstallments(sale_id, status);
   }
   @Post('installments/:id/pay') recordPayment(@Param('id') id: string, @Body() dto: any) {
-    return this.svc.recordPayment(id, dto.paid_amount, dto.paid_date);
+    return this.svc.recordPayment(
+      id,
+      dto.paid_amount,
+      dto.paid_date,
+      dto.bank_account_id,
+    );
   }
 }

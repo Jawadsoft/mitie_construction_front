@@ -84,12 +84,28 @@ export class SalesService {
       const unitRepo = manager.getRepository(PropertyUnit);
 
       const sale = await saleRepo.save(saleRepo.create(dto.sale));
-      if (dto.installments?.length) {
-        for (const inst of dto.installments) {
+      const installmentsIn =
+        dto.installments?.filter(
+          (inst) => inst.due_date && inst.due_amount != null && Number(inst.due_amount) > 0,
+        ) ?? [];
+      if (installmentsIn.length) {
+        for (const inst of installmentsIn) {
           await installRepo.save(
-            installRepo.create({ ...inst, sale_id: sale.id }),
+            installRepo.create({ ...inst, sale_id: sale.id, status: inst.status || 'Pending' }),
           );
         }
+      } else {
+        // Auto-create one installment for the full price so Collections always has a row
+        await installRepo.save(
+          installRepo.create({
+            sale_id: sale.id,
+            due_date: sale.sale_date,
+            due_amount: sale.total_sale_price,
+            paid_amount: '0.00',
+            status: 'Pending',
+            notes: 'Full sale amount',
+          }),
+        );
       }
       await unitRepo.update(sale.property_unit_id, { status: 'Sold' });
 
@@ -122,6 +138,7 @@ export class SalesService {
     installment_id: string,
     paid_amount: number,
     paid_date: string,
+    bank_account_id?: string | null,
   ) {
     if (!(paid_amount > 0)) return;
     const installRepo = manager.getRepository(SaleInstallment);
@@ -162,6 +179,7 @@ export class SalesService {
         installment_id,
         paid_date,
         project_id: unit?.project_id ?? null,
+        bank_account_id: bank_account_id || null,
       },
       manager,
     );
@@ -171,6 +189,7 @@ export class SalesService {
     installment_id: string,
     paid_amount: string,
     paid_date: string,
+    bank_account_id?: string | null,
   ) {
     const amount = Number(paid_amount);
     if (!(amount > 0)) {
@@ -194,6 +213,7 @@ export class SalesService {
         installment_id,
         amount,
         paid_date,
+        bank_account_id,
       );
       return installRepo.findOne({ where: { id: installment_id } });
     });
@@ -205,7 +225,11 @@ export class SalesService {
    */
   async collectOnSale(
     saleId: string,
-    dto: { paid_amount: string | number; paid_date: string },
+    dto: {
+      paid_amount: string | number;
+      paid_date: string;
+      bank_account_id?: string | null;
+    },
   ) {
     const amount = Number(dto.paid_amount);
     if (!(amount > 0)) {
@@ -259,6 +283,7 @@ export class SalesService {
           inst.id,
           slice,
           dto.paid_date,
+          dto.bank_account_id,
         );
         left = Math.round((left - slice) * 100) / 100;
       }
@@ -286,6 +311,7 @@ export class SalesService {
             created.id,
             catchUp,
             dto.paid_date,
+            dto.bank_account_id,
           );
           left = Math.round((left - catchUp) * 100) / 100;
         }
@@ -295,6 +321,126 @@ export class SalesService {
         throw new BadRequestException(
           'Could not allocate full collection amount to installments',
         );
+      }
+
+      const full = await saleRepo.findOne({
+        where: { id: saleId },
+        relations: ['customer', 'property_unit'],
+      });
+      const updatedInstallments = await installRepo.find({
+        where: { sale_id: saleId },
+        order: { due_date: 'ASC' },
+      });
+      return { ...full!, installments: updatedInstallments };
+    });
+  }
+
+  /**
+   * Edit total collected on a sale: clears prior payment journals/installment
+   * payments, then re-applies the new collected amount (FIFO).
+   */
+  async adjustSaleCollection(
+    saleId: string,
+    dto: {
+      total_collected: string | number;
+      paid_date: string;
+      bank_account_id?: string | null;
+    },
+  ) {
+    const target = Math.round(Number(dto.total_collected) * 100) / 100;
+    if (!Number.isFinite(target) || target < 0) {
+      throw new BadRequestException('total_collected must be a non-negative number');
+    }
+    if (!dto.paid_date) {
+      throw new BadRequestException('paid_date is required');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const saleRepo = manager.getRepository(Sale);
+      const installRepo = manager.getRepository(SaleInstallment);
+
+      const sale = await saleRepo.findOne({ where: { id: saleId } });
+      if (!sale) throw new NotFoundException('Sale not found');
+      if (sale.status === 'Cancelled') {
+        throw new BadRequestException('Cannot edit collection on a cancelled sale');
+      }
+
+      const price = Number(sale.total_sale_price);
+      if (target > price + 0.009) {
+        throw new BadRequestException(
+          `Collected amount cannot exceed sale price (${price.toFixed(2)})`,
+        );
+      }
+
+      const installments = await installRepo.find({ where: { sale_id: saleId } });
+      for (const inst of installments) {
+        await this.accounting.deleteJournalsByReferencePrefix(
+          `PMT-${inst.id}`,
+          manager,
+        );
+      }
+
+      for (const inst of installments) {
+        if (inst.notes && /catch-up/i.test(inst.notes)) {
+          await installRepo.delete(inst.id);
+        } else {
+          await installRepo.update(inst.id, {
+            paid_amount: '0.00',
+            paid_date: null,
+            status: 'Pending',
+          });
+        }
+      }
+
+      await saleRepo.update(saleId, {
+        total_paid: '0.00',
+        status: sale.status === 'Completed' ? 'Active' : sale.status,
+      });
+
+      if (target > 0.009) {
+        let left = target;
+        const openInst = await installRepo.find({
+          where: { sale_id: saleId },
+          order: { due_date: 'ASC', id: 'ASC' },
+        });
+
+        for (const inst of openInst) {
+          if (left <= 0.009) break;
+          const bal =
+            Math.round((Number(inst.due_amount) - Number(inst.paid_amount)) * 100) /
+            100;
+          if (bal <= 0.009) continue;
+          const slice = Math.min(left, bal);
+          await this.applyInstallmentPayment(
+            manager,
+            inst.id,
+            slice,
+            dto.paid_date,
+            dto.bank_account_id,
+          );
+          left = Math.round((left - slice) * 100) / 100;
+        }
+
+        if (left > 0.009) {
+          const created = await installRepo.save(
+            installRepo.create({
+              sale_id: saleId,
+              due_date: dto.paid_date,
+              due_amount: left.toFixed(2),
+              paid_amount: '0.00',
+              paid_date: null,
+              status: 'Pending',
+              notes: 'Catch-up for full/direct collection',
+            }),
+          );
+          await this.applyInstallmentPayment(
+            manager,
+            created.id,
+            left,
+            dto.paid_date,
+            dto.bank_account_id,
+          );
+        }
       }
 
       const full = await saleRepo.findOne({
@@ -347,7 +493,7 @@ export class SalesService {
       if (!sale) throw new NotFoundException('Sale not found');
       const installments = await installRepo.find({ where: { sale_id: id } });
       for (const inst of installments) {
-        await this.accounting.deleteJournalByReference(
+        await this.accounting.deleteJournalsByReferencePrefix(
           `PMT-${inst.id}`,
           manager,
         );
