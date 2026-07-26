@@ -28,6 +28,7 @@ export interface SaleInstallment {
   due_amount: string;
   paid_amount: string;
   paid_date: string | null;
+  bank_account_id: string | null;
   status: string;
   notes: string | null;
 }

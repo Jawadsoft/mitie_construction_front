@@ -713,14 +713,17 @@ export class AccountingService implements OnModuleInit {
     }
 
     // 6) Collection payments — consolidate to stable PMT-{installmentId}
+    // Prefer bank_account_id stored on sale_installments (collection table).
     const installments: Array<{
       id: string;
       sale_id: string;
       paid_amount: string;
       paid_date: string | null;
+      bank_account_id: string | null;
       project_id: string | null;
     }> = await this.dataSource.query(`
-      SELECT si.id, si.sale_id, si.paid_amount, si.paid_date, pu.project_id
+      SELECT si.id, si.sale_id, si.paid_amount, si.paid_date,
+             si.bank_account_id, pu.project_id
       FROM sale_installments si
       INNER JOIN sales s ON s.id = si.sale_id
       LEFT JOIN property_units pu ON pu.id = s.property_unit_id
@@ -737,13 +740,21 @@ export class AccountingService implements OnModuleInit {
           continue;
         }
 
-        const bank_account_id = await this.resolveCollectionBankId(
-          String(inst.id),
-          inst.project_id,
-          banks,
-          cash.id,
-          opts?.default_collection_bank_id,
-        );
+        let bank_account_id: string | null = inst.bank_account_id
+          ? String(inst.bank_account_id)
+          : null;
+        if (bank_account_id && !banks.some((b) => String(b.id) === bank_account_id)) {
+          bank_account_id = null;
+        }
+        if (!bank_account_id) {
+          bank_account_id = await this.resolveCollectionBankId(
+            String(inst.id),
+            inst.project_id,
+            banks,
+            cash.id,
+            opts?.default_collection_bank_id,
+          );
+        }
 
         await this.dataSource.transaction(async (manager) => {
           await this.deleteJournalsByReferencePrefix(`PMT-${inst.id}`, manager);

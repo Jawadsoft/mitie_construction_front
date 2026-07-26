@@ -125,48 +125,26 @@ async function main() {
   // Fall back: for each mapping, delete PMT and we need post — use rebuild with default
   // only works for all.
 
-  // Direct line move using bank.account_id after loading banks:
+  // Persist bank on sale_installments (collection table) and rebuild PMT journal
   const bankById = new Map(banks.map((b) => [String(b.id), b]));
   let moved = 0;
   for (const row of onCash) {
     const bankId = MAP[row.installment_id] || ALL_BANK;
     if (!bankId) continue;
     const bank = bankById.get(String(bankId));
-    if (!bank?.account_id) {
-      console.error(`Bank #${bankId} has no COA account_id — skip ${row.reference_no}`);
+    if (!bank) {
+      console.error(`Unknown bank #${bankId} — skip ${row.reference_no}`);
       continue;
     }
-    // Rebuild single payment onto bank via voucher rebuild default won't isolate.
-    // Patch journal lines: update debit account + narration
-    const full = await api(token, 'GET', `/api/accounting/journal/${row.journal_id}`);
-    const lines = (full.lines || []).map((l) => {
-      if (l.dr_cr === 'DEBIT') {
-        return {
-          account_id: bank.account_id,
-          dr_cr: 'DEBIT',
-          amount: l.amount,
-          narration: `Bank: ${bank.bank_name || bank.name}`,
-        };
-      }
-      return {
-        account_id: l.account_id,
-        dr_cr: l.dr_cr,
-        amount: l.amount,
-        narration: l.narration || '',
-      };
+    await api(token, 'PATCH', `/api/sales/installments/${row.installment_id}/bank`, {
+      bank_account_id: bank.id,
     });
-    await api(token, 'PATCH', `/api/accounting/journal/${row.journal_id}`, {
-      entry: {
-        entry_date: String(full.entry_date).slice(0, 10),
-        reference_no: full.reference_no,
-        description: full.description,
-      },
-      lines,
-    });
-    console.log(`Moved ${row.reference_no} → bank #${bank.id} (${bank.bank_name || bank.name})`);
+    console.log(
+      `Saved collection bank + rebuilt ${row.reference_no} → bank #${bank.id} (${bank.bank_name || bank.name})`,
+    );
     moved += 1;
   }
-  console.log(`\nDone. Moved ${moved} collection(s).`);
+  console.log(`\nDone. Updated ${moved} collection(s) from installment table.`);
 }
 
 main().catch((err) => {

@@ -42,4 +42,9 @@ export class SalesController {
       dto.bank_account_id,
     );
   }
+  /** Set collection deposit bank and rebuild PMT onto that sub-account. */
+  @Patch('installments/:id/bank')
+  setInstallmentBank(@Param('id') id: string, @Body() dto: { bank_account_id?: string | null }) {
+    return this.svc.setInstallmentBank(id, dto.bank_account_id ?? null);
+  }
 }

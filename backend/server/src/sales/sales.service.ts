@@ -154,6 +154,9 @@ export class SalesService {
       paid_amount: newPaid.toFixed(2),
       status,
       paid_date,
+      ...(bank_account_id !== undefined
+        ? { bank_account_id: bank_account_id || null }
+        : {}),
     });
 
     const sale = await saleRepo.findOne({ where: { id: inst.sale_id } });
@@ -388,6 +391,7 @@ export class SalesService {
             paid_amount: '0.00',
             paid_date: null,
             status: 'Pending',
+            bank_account_id: null,
           });
         }
       }
@@ -463,6 +467,53 @@ export class SalesService {
     if (sale_id) q.andWhere('i.sale_id = :sid', { sid: sale_id });
     if (status) q.andWhere('i.status = :status', { status });
     return q.getMany();
+  }
+
+  /**
+   * Set deposit bank on a collected installment and rebuild its PMT journal
+   * onto that Cash & Bank sub-account (not parent 1000).
+   */
+  async setInstallmentBank(installment_id: string, bank_account_id: string | null) {
+    return this.dataSource.transaction(async (manager) => {
+      const installRepo = manager.getRepository(SaleInstallment);
+      const saleRepo = manager.getRepository(Sale);
+      const unitRepo = manager.getRepository(PropertyUnit);
+
+      const inst = await installRepo.findOne({ where: { id: installment_id } });
+      if (!inst) throw new NotFoundException('Installment not found');
+
+      await installRepo.update(installment_id, {
+        bank_account_id: bank_account_id || null,
+      });
+
+      const paid = Number(inst.paid_amount || 0);
+      await this.accounting.deleteJournalsByReferencePrefix(
+        `PMT-${installment_id}`,
+        manager,
+      );
+
+      if (paid > 0.009) {
+        const sale = await saleRepo.findOne({ where: { id: inst.sale_id } });
+        if (!sale) throw new NotFoundException('Sale not found');
+        const unit = await unitRepo.findOne({
+          where: { id: sale.property_unit_id },
+        });
+        await this.accounting.postSalePaymentJournal(
+          sale,
+          paid.toFixed(2),
+          {
+            installment_id,
+            paid_date: inst.paid_date || sale.sale_date,
+            project_id: unit?.project_id ?? null,
+            bank_account_id: bank_account_id || null,
+            reference_no: `PMT-${installment_id}`,
+          },
+          manager,
+        );
+      }
+
+      return installRepo.findOne({ where: { id: installment_id } });
+    });
   }
 
   async updateCustomer(id: string, dto: Partial<Customer>) {

@@ -21,6 +21,10 @@ export class SaleInstallment {
   @Column({ type: 'date', nullable: true })
   paid_date: string | null;
 
+  /** Partner bank where this collection was deposited (Cash & Bank sub-account). */
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  bank_account_id: string | null;
+
   @Column({ type: 'enum', enum: ['Pending', 'Partial', 'Paid', 'Overdue'], default: 'Pending' })
   status: string;
 
