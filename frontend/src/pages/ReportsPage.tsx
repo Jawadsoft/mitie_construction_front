@@ -281,8 +281,8 @@ export default function ReportsPage() {
                   <div>
                     <h3 className="font-semibold text-green-700 text-sm uppercase tracking-wide mb-2">Revenue</h3>
                     <div className="flex justify-between py-2 border-b text-sm">
-                      <span className="text-gray-700">Sales Collections</span>
-                      <span className="font-mono font-medium text-green-700">PKR {fmt(plData.revenue.sales_collections)}</span>
+                      <span className="text-gray-700">Sales Passed</span>
+                      <span className="font-mono font-medium text-green-700">PKR {fmt(plData.revenue.sales_passed)}</span>
                     </div>
                     <div className="flex justify-between py-2 font-bold text-sm bg-green-50 px-2 rounded">
                       <span>Total Revenue</span>

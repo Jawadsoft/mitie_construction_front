@@ -152,6 +152,286 @@ export class ProjectsService {
     );
   }
 
+  /**
+   * Aggregated project activity timeline from domain tables
+   * (expenses, sales, cash, journals, labour, procurement, stages).
+   */
+  async getActivityLog(projectId: string) {
+    const project = await this.projectsRepo.findOne({ where: { id: projectId } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    type ActivityRow = {
+      occurred_at: string;
+      category: string;
+      action: string;
+      description: string;
+      amount: number | null;
+      reference: string | null;
+      entity_type: string;
+      entity_id: string | null;
+    };
+
+    const mapRows = (
+      rows: Array<Record<string, unknown>>,
+      map: (r: Record<string, unknown>) => ActivityRow,
+    ): ActivityRow[] => rows.map(map);
+
+    const [
+      expenses,
+      cash,
+      journals,
+      sales,
+      collections,
+      labourPayments,
+      labourAdvances,
+      stages,
+      materialIssues,
+      purchaseOrders,
+      materialRequests,
+    ] = await Promise.all([
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(expense_date::date, 'YYYY-MM-DD') AS occurred_at,
+                category, description, CAST(amount AS NUMERIC) AS amount, payment_type
+         FROM expenses WHERE project_id = $1 ORDER BY expense_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(transaction_date::date, 'YYYY-MM-DD') AS occurred_at,
+                type, description, CAST(amount AS NUMERIC) AS amount, reference_no, method
+         FROM cash_transactions WHERE project_id = $1 ORDER BY transaction_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(entry_date::date, 'YYYY-MM-DD') AS occurred_at,
+                reference_no, description, status
+         FROM journal_entries WHERE project_id = $1 AND status = 'Posted'
+         ORDER BY entry_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT s.id::text AS id, TO_CHAR(s.sale_date::date, 'YYYY-MM-DD') AS occurred_at,
+                CAST(s.total_sale_price AS NUMERIC) AS amount, s.status,
+                COALESCE(c.name, 'Customer') AS customer_name,
+                COALESCE(pu.unit_number, pu.id::text) AS unit_label
+         FROM sales s
+         JOIN property_units pu ON pu.id = s.property_unit_id
+         LEFT JOIN customers c ON c.id = s.customer_id
+         WHERE pu.project_id = $1 AND s.status != 'Cancelled'
+         ORDER BY s.sale_date DESC, s.id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT i.id::text AS id, TO_CHAR(i.paid_date::date, 'YYYY-MM-DD') AS occurred_at,
+                CAST(i.paid_amount AS NUMERIC) AS amount, i.status,
+                s.id::text AS sale_id, COALESCE(c.name, 'Customer') AS customer_name
+         FROM sale_installments i
+         JOIN sales s ON s.id = i.sale_id
+         JOIN property_units pu ON pu.id = s.property_unit_id
+         LEFT JOIN customers c ON c.id = s.customer_id
+         WHERE pu.project_id = $1 AND i.paid_date IS NOT NULL AND CAST(i.paid_amount AS NUMERIC) > 0
+         ORDER BY i.paid_date DESC, i.id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(payment_date::date, 'YYYY-MM-DD') AS occurred_at,
+                CAST(amount AS NUMERIC) AS amount, notes
+         FROM labour_payments WHERE project_id = $1 ORDER BY payment_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(advance_date::date, 'YYYY-MM-DD') AS occurred_at,
+                CAST(amount AS NUMERIC) AS amount, notes
+         FROM labour_advances WHERE project_id = $1 ORDER BY advance_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id,
+                TO_CHAR(COALESCE(start_date, created_at::date)::date, 'YYYY-MM-DD') AS occurred_at,
+                name, status, CAST(completion_percent AS NUMERIC) AS completion_percent,
+                TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS created_at
+         FROM project_stages WHERE project_id = $1 ORDER BY sequence_order ASC, id ASC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(issue_date::date, 'YYYY-MM-DD') AS occurred_at,
+                notes, purpose, CAST(total_cost AS NUMERIC) AS amount, reference_no
+         FROM material_issues WHERE project_id = $1 ORDER BY issue_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(order_date::date, 'YYYY-MM-DD') AS occurred_at,
+                CAST(total_amount AS NUMERIC) AS amount, status
+         FROM purchase_orders WHERE project_id = $1 ORDER BY order_date DESC, id DESC`,
+        [projectId],
+      ),
+      this.dataSource.query(
+        `SELECT id::text AS id, TO_CHAR(request_date::date, 'YYYY-MM-DD') AS occurred_at,
+                status, request_no
+         FROM material_requests WHERE project_id = $1 ORDER BY request_date DESC, id DESC`,
+        [projectId],
+      ),
+    ]);
+
+    const activities: ActivityRow[] = [
+      ...mapRows(expenses, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Expense',
+        action: 'Recorded',
+        description: `${r.category}${r.description ? ` — ${r.description}` : ''}`,
+        amount: Number(r.amount),
+        reference: r.payment_type ? String(r.payment_type) : null,
+        entity_type: 'expense',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(cash, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Cash',
+        action: r.type === 'IN' ? 'Cash In' : 'Cash Out',
+        description: String(r.description || r.method || 'Cash transaction'),
+        amount: Number(r.amount),
+        reference: r.reference_no ? String(r.reference_no) : null,
+        entity_type: 'cash_transaction',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(journals, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Accounting',
+        action: 'Journal Posted',
+        description: String(r.description || 'Journal entry'),
+        amount: null,
+        reference: r.reference_no ? String(r.reference_no) : `JE-${r.id}`,
+        entity_type: 'journal_entry',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(sales, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Sale',
+        action: 'Sale Created',
+        description: `${r.customer_name} · Unit ${r.unit_label} (${r.status})`,
+        amount: Number(r.amount),
+        reference: `SALE-${r.id}`,
+        entity_type: 'sale',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(collections, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Collection',
+        action: 'Payment Received',
+        description: `${r.customer_name} · Installment payment`,
+        amount: Number(r.amount),
+        reference: `PMT-${r.sale_id}`,
+        entity_type: 'sale_installment',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(labourPayments, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Labour',
+        action: 'Wage Paid',
+        description: String(r.notes || 'Labour payment'),
+        amount: Number(r.amount),
+        reference: `LAB-${r.id}`,
+        entity_type: 'labour_payment',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(labourAdvances, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Labour',
+        action: 'Advance Paid',
+        description: String(r.notes || 'Labour advance'),
+        amount: Number(r.amount),
+        reference: `ADV-${r.id}`,
+        entity_type: 'labour_advance',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(stages, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Stage',
+        action: 'Stage',
+        description: `${r.name} — ${r.status} (${Number(r.completion_percent)}% complete)`,
+        amount: null,
+        reference: null,
+        entity_type: 'project_stage',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(materialIssues, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Inventory',
+        action: 'Material Issued',
+        description: String(r.purpose || r.notes || 'Material issued to site'),
+        amount: r.amount != null ? Number(r.amount) : null,
+        reference: r.reference_no ? String(r.reference_no) : `ISS-${r.id}`,
+        entity_type: 'material_issue',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(purchaseOrders, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Procurement',
+        action: 'Purchase Order',
+        description: `PO #${r.id} — ${r.status}`,
+        amount: r.amount != null ? Number(r.amount) : null,
+        reference: `PO-${r.id}`,
+        entity_type: 'purchase_order',
+        entity_id: String(r.id),
+      })),
+      ...mapRows(materialRequests, (r) => ({
+        occurred_at: String(r.occurred_at),
+        category: 'Procurement',
+        action: 'Material Request',
+        description: `Request ${r.request_no || r.id} — ${r.status}`,
+        amount: null,
+        reference: r.request_no ? String(r.request_no) : `MR-${r.id}`,
+        entity_type: 'material_request',
+        entity_id: String(r.id),
+      })),
+    ];
+
+    if (project.created_at) {
+      const created =
+        project.created_at instanceof Date
+          ? project.created_at.toISOString().slice(0, 10)
+          : String(project.created_at).slice(0, 10);
+      activities.push({
+        occurred_at: created,
+        category: 'Project',
+        action: 'Created',
+        description: `Project created — status ${project.status}`,
+        amount: null,
+        reference: null,
+        entity_type: 'project',
+        entity_id: String(project.id),
+      });
+    }
+
+    if (project.sold_as_is) {
+      activities.push({
+        occurred_at: project.sold_at || String(project.updated_at || '').slice(0, 10) || '',
+        category: 'Project',
+        action: 'Sold During Construction',
+        description: `Sold as-is to ${project.sold_buyer_name || 'buyer'}${
+          project.sold_notes ? ` — ${project.sold_notes}` : ''
+        }`,
+        amount: project.sold_price != null ? Number(project.sold_price) : null,
+        reference: null,
+        entity_type: 'project',
+        entity_id: String(project.id),
+      });
+    }
+
+    activities.sort((a, b) => {
+      if (a.occurred_at === b.occurred_at) {
+        return String(b.entity_id).localeCompare(String(a.entity_id), undefined, { numeric: true });
+      }
+      return a.occurred_at < b.occurred_at ? 1 : -1;
+    });
+
+    return {
+      project_id: String(project.id),
+      project_name: project.name,
+      total: activities.length,
+      activities,
+    };
+  }
+
   private normalizePlotSizeSqft(value: number | string | null): string | null {
     if (value === null || value === '') return null;
     const n = Number(value);
@@ -484,13 +764,20 @@ export class ProjectsService {
         COALESCE((
           SELECT SUM(CAST(s.total_paid AS NUMERIC)) FROM sales s
           JOIN property_units pu ON pu.id = s.property_unit_id
-          WHERE pu.project_id = p.id
+          WHERE pu.project_id = p.id AND s.status != 'Cancelled'
         ), 0) AS total_collected,
-        COALESCE((
-          SELECT SUM(CAST(s.total_sale_price AS NUMERIC)) FROM sales s
-          JOIN property_units pu ON pu.id = s.property_unit_id
-          WHERE pu.project_id = p.id
-        ), 0) AS sold_value,
+        (
+          COALESCE((
+            SELECT SUM(CAST(s.total_sale_price AS NUMERIC)) FROM sales s
+            JOIN property_units pu ON pu.id = s.property_unit_id
+            WHERE pu.project_id = p.id AND s.status != 'Cancelled'
+          ), 0)
+          + CASE
+              WHEN p.sold_as_is = true AND p.sold_price IS NOT NULL
+              THEN CAST(p.sold_price AS NUMERIC)
+              ELSE 0
+            END
+        ) AS sold_value,
         COALESCE((
           SELECT SUM(CAST(ft.amount AS NUMERIC)) FROM fund_transactions ft
           JOIN fund_sources fs ON fs.id = ft.fund_source_id
@@ -531,6 +818,8 @@ export class ProjectsService {
     const soldValue = Number(financials?.sold_value || 0);
     const fundReceipts = Number(financials?.fund_receipts || 0);
     const collectionBase = targetSale > 0 ? targetSale : soldValue;
+    // Profitability = sales created against project − project expenses (not collections)
+    const profit = soldValue - totalSpent;
 
     return {
       ...project,
@@ -541,6 +830,9 @@ export class ProjectsService {
         total_spent: totalSpent,
         total_collected: totalCollected,
         sold_value: soldValue,
+        profit,
+        profit_margin_pct:
+          soldValue > 0 ? Math.round((profit / soldValue) * 100) : 0,
         fund_receipts: fundReceipts,
         budget_used_pct: budget > 0 ? Math.min(100, Math.round((totalSpent / budget) * 100)) : 0,
         collection_pct:

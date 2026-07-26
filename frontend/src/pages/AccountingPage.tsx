@@ -25,7 +25,7 @@ import type {
   JournalEntry,
   JournalEntryLine,
   TrialBalanceRow,
-  GeneralLedgerRow,
+  GeneralLedgerReport,
   BalanceSheetReport,
   BankAccount,
   BankStatementLine,
@@ -34,6 +34,7 @@ import type {
 import Modal from '../components/Modal';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
+import { formatDate } from '../utils/date';
 
 type Tab = 'journal' | 'accounts' | 'trial-balance' | 'general-ledger' | 'balance-sheet' | 'bank-recon';
 
@@ -51,8 +52,12 @@ export default function AccountingPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalanceRow[]>([]);
-  const [glRows, setGlRows] = useState<GeneralLedgerRow[]>([]);
+  const [glReport, setGlReport] = useState<GeneralLedgerReport | null>(null);
   const [glAccountId, setGlAccountId] = useState('');
+  const [glAccountScope, setGlAccountScope] = useState<'all' | 'heads' | 'specific'>('all');
+  const [glFrom, setGlFrom] = useState('');
+  const [glTo, setGlTo] = useState('');
+  const [glIncludeChildren, setGlIncludeChildren] = useState(true);
   const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport | null>(null);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState('');
@@ -109,7 +114,14 @@ export default function AccountingPage() {
   useEffect(() => {
     if (tab === 'trial-balance') getTrialBalance().then(setTrialBalance).catch((e) => setError(e.message));
     if (tab === 'general-ledger' && glAccountId) {
-      getGeneralLedger(glAccountId).then(setGlRows).catch((e) => setError(e.message));
+      getGeneralLedger(
+        glAccountId,
+        glFrom || undefined,
+        glTo || undefined,
+        glIncludeChildren,
+      )
+        .then(setGlReport)
+        .catch((e) => setError(e.message));
     }
     if (tab === 'balance-sheet') getBalanceSheet().then(setBalanceSheet).catch((e) => setError(e.message));
     if (tab === 'bank-recon' && selectedBankId) {
@@ -117,7 +129,7 @@ export default function AccountingPage() {
         .then(([s, r]) => { setStatements(s); setRecons(r); })
         .catch((e) => setError(e.message));
     }
-  }, [tab, glAccountId, selectedBankId]);
+  }, [tab, glAccountId, glFrom, glTo, glIncludeChildren, selectedBankId]);
 
   const viewEntry = async (id: string) => {
     try {
@@ -175,7 +187,7 @@ export default function AccountingPage() {
         </div>
         {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
         <div className="bg-white rounded-xl border p-4 text-sm grid grid-cols-2 gap-3">
-          <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{selectedEntry.entry_date}</span></div>
+          <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{formatDate(selectedEntry.entry_date)}</span></div>
           <div><span className="text-gray-500">Reference:</span> <span className="font-medium ml-1">{selectedEntry.reference_no ?? '-'}</span></div>
           <div className="col-span-2"><span className="text-gray-500">Description:</span> <span className="font-medium ml-1">{selectedEntry.description ?? '-'}</span></div>
         </div>
@@ -293,7 +305,7 @@ export default function AccountingPage() {
               ) : entries.map((e) => (
                 <tr key={e.id} className="border-t hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium cursor-pointer" onClick={() => viewEntry(e.id)}>JE-{e.id}</td>
-                  <td className="px-4 py-3 cursor-pointer" onClick={() => viewEntry(e.id)}>{e.entry_date}</td>
+                  <td className="px-4 py-3 cursor-pointer" onClick={() => viewEntry(e.id)}>{formatDate(e.entry_date)}</td>
                   <td className="px-4 py-3 text-xs font-mono text-gray-500 cursor-pointer" onClick={() => viewEntry(e.id)}>{e.reference_no ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600 cursor-pointer" onClick={() => viewEntry(e.id)}>{e.description ?? '-'}</td>
                   <td className="px-4 py-3">
@@ -391,43 +403,201 @@ export default function AccountingPage() {
           </table>
         </div>
       ) : tab === 'general-ledger' ? (
-        <div className="space-y-3">
-          <select value={glAccountId} onChange={(e) => setGlAccountId(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.parent_account_id ? `  ${a.code} – ${a.name}` : `${a.code} – ${a.name}`}
-              </option>
-            ))}
-          </select>
-          <div className="bg-white rounded-xl border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-gray-600">Date</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Ref</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Description</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Debit</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Credit</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {glRows.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center text-gray-400 py-8">No posted lines for this account.</td></tr>
-                ) : glRows.map((r, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-4 py-3">{r.entry_date}</td>
-                    <td className="px-4 py-3">{r.reference_no ?? '-'}</td>
-                    <td className="px-4 py-3">{r.description ?? '-'}</td>
-                    <td className="px-4 py-3 text-right font-mono">{Number(r.debit) ? Number(r.debit).toLocaleString() : '-'}</td>
-                    <td className="px-4 py-3 text-right font-mono">{Number(r.credit) ? Number(r.credit).toLocaleString() : '-'}</td>
-                    <td className="px-4 py-3 text-right font-mono font-medium">{Number(r.running_balance).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        (() => {
+          const headIds = new Set(
+            accounts.filter((a) => accounts.some((c) => c.parent_account_id === a.id)).map((a) => a.id),
+          );
+          const sortedAccounts = [...accounts].sort((a, b) => a.code.localeCompare(b.code));
+          const filteredAccounts = sortedAccounts.filter((a) => {
+            if (glAccountScope === 'heads') return headIds.has(a.id) || !a.parent_account_id;
+            if (glAccountScope === 'specific') return Boolean(a.parent_account_id) || !headIds.has(a.id);
+            return true;
+          });
+          const selected = accounts.find((a) => a.id === glAccountId);
+          const selectedIsHead = selected ? headIds.has(selected.id) : false;
+          const showAccountCol = Boolean(glReport?.include_children);
+          const money = (n: number | string) => {
+            const v = Number(n);
+            return v ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+          };
+          const bal = (amount: number, side: string) =>
+            side ? `${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${side}` : '—';
+          const colSpan = showAccountCol ? 7 : 6;
+
+          return (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-3 items-end bg-white border rounded-xl p-3">
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  Account type
+                  <select
+                    value={glAccountScope}
+                    onChange={(e) => {
+                      const scope = e.target.value as 'all' | 'heads' | 'specific';
+                      setGlAccountScope(scope);
+                      const next = sortedAccounts.filter((a) => {
+                        if (scope === 'heads') return headIds.has(a.id) || !a.parent_account_id;
+                        if (scope === 'specific') return Boolean(a.parent_account_id) || !headIds.has(a.id);
+                        return true;
+                      });
+                      if (next.length && !next.some((a) => a.id === glAccountId)) {
+                        setGlAccountId(next[0].id);
+                      }
+                    }}
+                    className="border rounded-lg px-3 py-2 text-sm min-w-[160px]"
+                  >
+                    <option value="all">All accounts</option>
+                    <option value="heads">Head accounts</option>
+                    <option value="specific">Specific / sub accounts</option>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  Account
+                  <select
+                    value={glAccountId}
+                    onChange={(e) => setGlAccountId(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm min-w-[260px]"
+                  >
+                    {filteredAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.parent_account_id ? `  ${a.code} – ${a.name}` : `${a.code} – ${a.name}`}
+                        {headIds.has(a.id) ? ' (Head)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  From
+                  <input
+                    type="date"
+                    value={glFrom}
+                    onChange={(e) => setGlFrom(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs text-slate-500 flex flex-col gap-1">
+                  To
+                  <input
+                    type="date"
+                    value={glTo}
+                    onChange={(e) => setGlTo(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                {selectedIsHead && (
+                  <label className="flex items-center gap-2 text-sm text-slate-600 pb-2">
+                    <input
+                      type="checkbox"
+                      checked={glIncludeChildren}
+                      onChange={(e) => setGlIncludeChildren(e.target.checked)}
+                      className="rounded border-slate-300"
+                    />
+                    Include sub-accounts
+                  </label>
+                )}
+                {(glFrom || glTo) && (
+                  <button
+                    type="button"
+                    onClick={() => { setGlFrom(''); setGlTo(''); }}
+                    className="text-xs text-slate-500 underline pb-2"
+                  >
+                    Clear dates
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b bg-slate-50">
+                  <div className="flex flex-wrap justify-between gap-2 items-baseline">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">General Ledger</p>
+                      <h3 className="font-semibold text-slate-900">
+                        {glReport
+                          ? `${glReport.account.code} — ${glReport.account.name}`
+                          : selected
+                            ? `${selected.code} — ${selected.name}`
+                            : 'Select an account'}
+                      </h3>
+                      {glReport?.account.is_head && glReport.include_children && (
+                        <p className="text-xs text-slate-500 mt-0.5">Head account (includes sub-account postings)</p>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Period:{' '}
+                      {glReport?.period.from || glReport?.period.to
+                        ? `${glReport?.period.from ? formatDate(glReport.period.from) : '…'} to ${glReport?.period.to ? formatDate(glReport.period.to) : '…'}`
+                        : 'All time'}
+                    </p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-28">Date</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-32">Voucher No.</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Particulars</th>
+                        {showAccountCol && (
+                          <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-40">Account</th>
+                        )}
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Debit</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Credit</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-36">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!glReport || glReport.rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={colSpan} className="text-center text-gray-400 py-10">
+                            No posted ledger lines for this account / period.
+                          </td>
+                        </tr>
+                      ) : (
+                        glReport.rows.map((r, i) => (
+                          <tr
+                            key={i}
+                            className={`border-t ${r.is_opening ? 'bg-amber-50/60 font-medium' : 'hover:bg-slate-50/80'}`}
+                          >
+                            <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.entry_date)}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.voucher_no || '—'}</td>
+                            <td className="px-3 py-2">{r.particular || '—'}</td>
+                            {showAccountCol && (
+                              <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
+                                {r.account_code} {r.account_name}
+                              </td>
+                            )}
+                            <td className="px-3 py-2 text-right font-mono">{money(r.debit)}</td>
+                            <td className="px-3 py-2 text-right font-mono">{money(r.credit)}</td>
+                            <td className="px-3 py-2 text-right font-mono font-medium whitespace-nowrap">
+                              {bal(r.running_balance, r.balance_side)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {glReport && glReport.rows.length > 0 && (
+                      <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                        <tr>
+                          <td colSpan={showAccountCol ? 4 : 3} className="px-3 py-2.5 font-semibold text-slate-700">
+                            Period totals / Closing balance
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold">
+                            {glReport.totals.debit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold">
+                            {glReport.totals.credit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold whitespace-nowrap">
+                            {bal(glReport.totals.closing_balance, glReport.totals.closing_balance_side)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()
       ) : tab === 'balance-sheet' && balanceSheet ? (
         <div className="grid md:grid-cols-3 gap-4">
           {[
@@ -474,7 +644,7 @@ export default function AccountingPage() {
                   <tr><td colSpan={5} className="text-center text-gray-400 py-6">No statement lines.</td></tr>
                 ) : statements.map((s) => (
                   <tr key={s.id} className="border-t">
-                    <td className="px-4 py-2">{s.statement_date}</td>
+                    <td className="px-4 py-2">{formatDate(s.statement_date)}</td>
                     <td className="px-4 py-2">{s.description ?? '-'}</td>
                     <td className="px-4 py-2 text-right font-mono">{Number(s.amount).toLocaleString()}</td>
                     <td className="px-4 py-2">{s.reconciled ? 'Yes' : 'No'}</td>
@@ -517,7 +687,7 @@ export default function AccountingPage() {
             <ul className="text-sm space-y-1">
               {recons.map((r) => (
                 <li key={r.id} className="flex justify-between items-center border-t py-2">
-                  <span>{r.period_start} → {r.period_end} ({r.status})</span>
+                  <span>{formatDate(r.period_start)} → {formatDate(r.period_end)} ({r.status})</span>
                   {r.status === 'Open' && (
                     <button onClick={async () => { await completeReconciliation(r.id); setRecons(await getReconciliations(selectedBankId)); }} className="text-green-700 text-xs hover:underline">Complete</button>
                   )}

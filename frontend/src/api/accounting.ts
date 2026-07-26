@@ -41,11 +41,40 @@ export interface TrialBalanceRow {
 export interface GeneralLedgerRow {
   entry_date: string;
   reference_no: string | null;
+  voucher_no: string;
+  particular: string;
   description: string | null;
-  journal_entry_id: string;
+  narration: string | null;
+  journal_entry_id: string | null;
+  account_id: string;
+  account_code: string;
+  account_name: string;
   debit: string;
   credit: string;
   running_balance: number;
+  balance_side: 'Dr' | 'Cr' | '';
+  is_opening?: boolean;
+}
+
+export interface GeneralLedgerReport {
+  account: {
+    id: string;
+    code: string;
+    name: string;
+    type: string;
+    is_head: boolean;
+  };
+  include_children: boolean;
+  period: { from: string | null; to: string | null };
+  opening_balance: number;
+  opening_balance_side: 'Dr' | 'Cr' | '';
+  rows: GeneralLedgerRow[];
+  totals: {
+    debit: number;
+    credit: number;
+    closing_balance: number;
+    closing_balance_side: 'Dr' | 'Cr' | '';
+  };
 }
 
 export interface BalanceSheetReport {
@@ -179,10 +208,16 @@ export async function getTrialBalance(from?: string, to?: string): Promise<Trial
   return res.json();
 }
 
-export async function getGeneralLedger(account_id: string, from?: string, to?: string): Promise<GeneralLedgerRow[]> {
+export async function getGeneralLedger(
+  account_id: string,
+  from?: string,
+  to?: string,
+  include_children?: boolean,
+): Promise<GeneralLedgerReport> {
   const params = new URLSearchParams({ account_id });
   if (from) params.set('from', from);
   if (to) params.set('to', to);
+  if (include_children !== undefined) params.set('include_children', String(include_children));
   const res = await fetch(`${BASE}/reports/general-ledger?${params}`, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to fetch general ledger');
   return res.json();

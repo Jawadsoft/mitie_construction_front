@@ -70,8 +70,13 @@ export class AccountingController {
     @Query('account_id') account_id: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('include_children') include_children?: string,
   ) {
-    return this.svc.getGeneralLedger(account_id, from, to);
+    const includeChildren =
+      include_children === undefined
+        ? undefined
+        : include_children === 'true' || include_children === '1';
+    return this.svc.getGeneralLedger(account_id, from, to, includeChildren);
   }
 
   @Get('reports/balance-sheet') getBalanceSheet(@Query('as_of') as_of?: string) {

@@ -5,6 +5,7 @@ import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import Modal from '../components/Modal';
 import StatCard from '../components/StatCard';
+import { formatDate } from '../utils/date';
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-PK', { maximumFractionDigits: 0 }).format(n);
@@ -101,7 +102,7 @@ export default function CashflowPage() {
                   <tr><td colSpan={6} className="text-center text-gray-400 py-8">No transactions yet.</td></tr>
                 ) : transactions.map(t => (
                   <tr key={t.id} className="border-t hover:bg-gray-50">
-                    <td className="px-4 py-3">{t.transaction_date}</td>
+                    <td className="px-4 py-3">{formatDate(t.transaction_date)}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.type === 'IN' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                         {t.type === 'IN' ? '↑ IN' : '↓ OUT'}

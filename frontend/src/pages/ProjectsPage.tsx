@@ -18,6 +18,7 @@ import PakistanLocationInput from '../components/PakistanLocationInput';
 import PlotSizeField from '../components/PlotSizeField';
 import ProjectQuickEntry from '../components/ProjectQuickEntry';
 import type { QuickEntryKind } from '../components/ProjectQuickEntry';
+import ProjectActivityLog from '../components/ProjectActivityLog';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { formatPlotEquivalents, PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
@@ -216,6 +217,7 @@ export default function ProjectsPage({ onSelectProject }: Props) {
   const [form, setForm] = useState(emptyForm);
   const [editForm, setEditForm] = useState(emptyForm);
   const [quickEntry, setQuickEntry] = useState<{ project: Project; kind: QuickEntryKind } | null>(null);
+  const [activityProject, setActivityProject] = useState<Project | null>(null);
   const [marlaSqft, setMarlaSqft] = useState(PAKISTAN_MARLA_SQFT);
 
   const load = async () => {
@@ -514,18 +516,38 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-400">Spent</p>
+                  <p className="text-slate-400">Expenses</p>
                   <p className="font-medium text-red-700">
                     PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-400">Collected</p>
+                  <p className="text-slate-400">Sales</p>
                   <p className="font-medium text-green-700">
-                    PKR {Number(p.computed?.total_collected ?? 0).toLocaleString()}
+                    PKR {Number(p.computed?.sold_value ?? 0).toLocaleString()}
                   </p>
                 </div>
               </div>
+              <div className="flex justify-between items-center text-xs rounded bg-slate-50 px-2 py-1.5">
+                <span className="text-slate-500">Profitability</span>
+                <span
+                  className={`font-semibold font-mono ${
+                    Number(p.computed?.profit ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'
+                  }`}
+                >
+                  PKR {Number(p.computed?.profit ?? 0).toLocaleString()}
+                  {Number(p.computed?.sold_value ?? 0) > 0 && (
+                    <span className="text-slate-400 font-normal ml-1">
+                      ({p.computed?.profit_margin_pct ?? 0}%)
+                    </span>
+                  )}
+                </span>
+              </div>
+              {Number(p.computed?.total_collected ?? 0) > 0 && (
+                <p className="text-xs text-slate-500">
+                  Collected: PKR {Number(p.computed?.total_collected).toLocaleString()}
+                </p>
+              )}
               {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
                 <div>
                   <div className="flex justify-between text-xs mb-1">
@@ -596,8 +618,15 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                   + Payment
                 </button>
               </div>
-              <div className="flex gap-2 pt-1">
+              <div className="flex flex-wrap gap-2 pt-1">
                 <button className="flex-1 text-xs rounded border border-slate-300 py-1.5 hover:bg-slate-50" onClick={() => onSelectProject(p.id)}>View Details</button>
+                <button
+                  type="button"
+                  className="text-xs rounded border border-violet-200 text-violet-700 px-3 py-1.5 hover:bg-violet-50"
+                  onClick={() => setActivityProject(p)}
+                >
+                  Activity Log
+                </button>
                 <button
                   className="text-xs rounded border border-blue-200 text-blue-600 px-3 py-1.5 hover:bg-blue-50 disabled:opacity-50"
                   disabled={!!deletingId}
@@ -724,6 +753,14 @@ export default function ProjectsPage({ onSelectProject }: Props) {
           kind={quickEntry.kind}
           onClose={() => setQuickEntry(null)}
           onSaved={() => { setQuickEntry(null); load(); }}
+        />
+      )}
+
+      {activityProject && (
+        <ProjectActivityLog
+          projectId={activityProject.id}
+          projectName={activityProject.name}
+          onClose={() => setActivityProject(null)}
         />
       )}
     </div>

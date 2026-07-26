@@ -11,6 +11,7 @@ import {
 import type { Project, Stage } from '../api/projects';
 import FieldLabel from '../components/FieldLabel';
 import MoneyInput from '../components/MoneyInput';
+import ProjectActivityLog from '../components/ProjectActivityLog';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { notify, notifyError } from '../utils/toast';
 import { parseMoneyInput } from '../utils/money';
@@ -81,6 +82,7 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
 
   const [showDefaultModal, setShowDefaultModal] = useState(false);
   const [showSellModal, setShowSellModal] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
   useBodyScrollLock(showDefaultModal || showSellModal);
   const [selectedDefaults, setSelectedDefaults] = useState<Set<number>>(new Set(DEFAULT_STAGES.map((_, i) => i)));
   const [addingDefaults, setAddingDefaults] = useState(false);
@@ -262,17 +264,26 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
                 )}
               </div>
             </div>
-            <span className={`shrink-0 text-xs px-3 py-1 rounded-full font-semibold border ${
-              project.status === 'Active' ? 'bg-green-500/20 text-green-300 border-green-500/40' :
-              project.status === 'Completed' ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' :
-              project.status === 'On Hold' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' :
-              project.status === 'Sold' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
-              project.status === 'Sold During Construction' ? 'bg-indigo-500/20 text-indigo-200 border-indigo-400/40' :
-              project.status === 'Cancelled' ? 'bg-red-500/20 text-red-300 border-red-500/40' :
-              'bg-slate-500/20 text-slate-300 border-slate-500/40'
-            }`}>
-              {project.status}
-            </span>
+            <div className="shrink-0 flex flex-col items-end gap-2">
+              <span className={`text-xs px-3 py-1 rounded-full font-semibold border ${
+                project.status === 'Active' ? 'bg-green-500/20 text-green-300 border-green-500/40' :
+                project.status === 'Completed' ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' :
+                project.status === 'On Hold' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' :
+                project.status === 'Sold' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                project.status === 'Sold During Construction' ? 'bg-indigo-500/20 text-indigo-200 border-indigo-400/40' :
+                project.status === 'Cancelled' ? 'bg-red-500/20 text-red-300 border-red-500/40' :
+                'bg-slate-500/20 text-slate-300 border-slate-500/40'
+              }`}>
+                {project.status}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowActivityLog(true)}
+                className="text-xs rounded-lg border border-white/25 bg-white/10 text-white px-3 py-1.5 hover:bg-white/20"
+              >
+                Activity Log
+              </button>
+            </div>
           </div>
 
           {(project.computed?.stage_count || 0) > 0 && (
@@ -740,6 +751,14 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
           </div>
         )}
       </div>
+
+      {showActivityLog && (
+        <ProjectActivityLog
+          projectId={projectId}
+          projectName={project.name}
+          onClose={() => setShowActivityLog(false)}
+        />
+      )}
     </div>
   );
 }

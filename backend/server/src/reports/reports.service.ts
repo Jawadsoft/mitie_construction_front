@@ -118,10 +118,11 @@ export class ReportsService {
       return parts.length ? `AND ${parts.join(' AND ')}` : '';
     };
 
+    // Revenue = recognized / passed sales (sale price), not installment collections
     const [revenue] = await this.q(`
-      SELECT COALESCE(SUM(CAST(i.paid_amount AS NUMERIC)), 0) AS total
-      FROM sale_installments i
-      WHERE i.status IN ('Paid','Partial') ${dateFilter('i.paid_date')}
+      SELECT COALESCE(SUM(CAST(s.total_sale_price AS NUMERIC)), 0) AS total
+      FROM sales s
+      WHERE s.status != 'Cancelled' ${dateFilter('s.sale_date')}
     `);
 
     const expenses_by_cat = await this.q(`
@@ -151,7 +152,7 @@ export class ReportsService {
     return {
       period: { from: from ?? 'All time', to: to ?? 'All time' },
       revenue: {
-        sales_collections: total_revenue,
+        sales_passed: total_revenue,
         total: total_revenue,
       },
       expenses: {
@@ -167,20 +168,32 @@ export class ReportsService {
 
   // ─── Supplier Payables ────────────────────────────────────────────────────
   async getSupplierPayables() {
+    // Outstanding BILL expenses (AP), plus PO totals for context — separate subqueries (no join fan-out)
     const rows = await this.q(`
       SELECT
         s.id AS supplier_id,
         s.name AS supplier_name,
         s.phone,
-        COALESCE(SUM(CAST(po.total_amount AS NUMERIC)), 0) AS total_ordered,
-        COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS total_paid,
-        COALESCE(SUM(CAST(po.total_amount AS NUMERIC)), 0) -
-          COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS balance_due
+        COALESCE((
+          SELECT SUM(CAST(po.total_amount AS NUMERIC))
+          FROM purchase_orders po
+          WHERE po.supplier_id = s.id AND po.status != 'Cancelled'
+        ), 0) AS total_ordered,
+        COALESCE((
+          SELECT SUM(CAST(e.paid_amount AS NUMERIC))
+          FROM expenses e
+          WHERE e.supplier_id = s.id AND e.vendor_type = 'SUPPLIER'
+        ), 0) AS total_paid,
+        COALESCE((
+          SELECT SUM(CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC))
+          FROM expenses e
+          WHERE e.supplier_id = s.id
+            AND e.vendor_type = 'SUPPLIER'
+            AND e.entry_mode = 'BILL'
+            AND e.status IN ('Unpaid', 'Partial')
+        ), 0) AS balance_due
       FROM suppliers s
-      LEFT JOIN purchase_orders po ON po.supplier_id = s.id AND po.status != 'Cancelled'
-      LEFT JOIN expenses e ON e.supplier_id = s.id AND e.vendor_type = 'SUPPLIER'
       WHERE s.is_active = true
-      GROUP BY s.id, s.name, s.phone
       ORDER BY balance_due DESC
     `);
     return rows.map((r: any) => ({
@@ -201,17 +214,20 @@ export class ReportsService {
         c.phone,
         s.id AS sale_id,
         pu.unit_number,
-        COALESCE(SUM(CAST(si.due_amount AS NUMERIC)),0) AS total_due,
-        COALESCE(SUM(CAST(si.paid_amount AS NUMERIC)),0) AS total_paid,
-        COALESCE(SUM(CAST(si.due_amount AS NUMERIC)),0) -
-          COALESCE(SUM(CAST(si.paid_amount AS NUMERIC)),0) AS balance,
-        COALESCE(SUM(CASE WHEN si.due_date < '${today}' AND si.status NOT IN ('Paid')
-          THEN CAST(si.due_amount AS NUMERIC) - CAST(si.paid_amount AS NUMERIC) ELSE 0 END),0) AS overdue
+        CAST(s.total_sale_price AS NUMERIC) AS total_due,
+        CAST(s.total_paid AS NUMERIC) AS total_paid,
+        CAST(s.total_sale_price AS NUMERIC) - CAST(s.total_paid AS NUMERIC) AS balance,
+        COALESCE((
+          SELECT SUM(CAST(si.due_amount AS NUMERIC) - CAST(si.paid_amount AS NUMERIC))
+          FROM sale_installments si
+          WHERE si.sale_id = s.id
+            AND si.status != 'Paid'
+            AND si.due_date < '${today}'
+        ), 0) AS overdue
       FROM customers c
       JOIN sales s ON s.customer_id = c.id AND s.status != 'Cancelled'
       JOIN property_units pu ON pu.id = s.property_unit_id
-      LEFT JOIN sale_installments si ON si.sale_id = s.id AND si.status != 'Paid'
-      GROUP BY c.id, c.name, c.phone, s.id, pu.unit_number
+      WHERE CAST(s.total_sale_price AS NUMERIC) > CAST(s.total_paid AS NUMERIC)
       ORDER BY overdue DESC, balance DESC
     `);
     return rows.map((r: any) => ({
@@ -260,29 +276,35 @@ export class ReportsService {
 
   // ─── Cashflow Report (grouped by period) ─────────────────────────────────
   async getCashflowReport(period: 'daily' | 'weekly' | 'monthly' = 'monthly', from?: string, to?: string) {
+    // Derived from posted Cash & Bank journal lines (same source as Cashflow page)
     const groupBy = period === 'daily'
-      ? `transaction_date::date`
+      ? `je.entry_date::date`
       : period === 'weekly'
-      ? `TO_CHAR(DATE_TRUNC('week', transaction_date::date), 'IYYY-IW')`
-      : `TO_CHAR(transaction_date, 'YYYY-MM')`;
+      ? `TO_CHAR(DATE_TRUNC('week', je.entry_date::date), 'IYYY-IW')`
+      : `TO_CHAR(je.entry_date, 'YYYY-MM')`;
 
     const label = period === 'daily'
-      ? `transaction_date::date`
+      ? `je.entry_date::date`
       : period === 'weekly'
-      ? `TO_CHAR(DATE_TRUNC('week', transaction_date::date), 'IYYY"-W"IW')`
-      : `TO_CHAR(transaction_date, 'YYYY-MM')`;
+      ? `TO_CHAR(DATE_TRUNC('week', je.entry_date::date), 'IYYY"-W"IW')`
+      : `TO_CHAR(je.entry_date, 'YYYY-MM')`;
 
-    const dateWhere: string[] = [];
-    if (from) dateWhere.push(`transaction_date >= '${from}'`);
-    if (to) dateWhere.push(`transaction_date <= '${to}'`);
-    const whereClause = dateWhere.length ? `WHERE ${dateWhere.join(' AND ')}` : '';
+    const dateWhere: string[] = [
+      `je.status = 'Posted'`,
+      `(a.code = '1000' OR a.parent_account_id = (SELECT id FROM accounts WHERE code = '1000' LIMIT 1))`,
+    ];
+    if (from) dateWhere.push(`je.entry_date >= '${from}'`);
+    if (to) dateWhere.push(`je.entry_date <= '${to}'`);
+    const whereClause = `WHERE ${dateWhere.join(' AND ')}`;
 
     const rows = await this.q(`
       SELECT
         ${label} AS period,
-        SUM(CASE WHEN type='IN' THEN CAST(amount AS NUMERIC) ELSE 0 END) AS cash_in,
-        SUM(CASE WHEN type='OUT' THEN CAST(amount AS NUMERIC) ELSE 0 END) AS cash_out
-      FROM cash_transactions
+        SUM(CASE WHEN l.dr_cr = 'DEBIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END) AS cash_in,
+        SUM(CASE WHEN l.dr_cr = 'CREDIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END) AS cash_out
+      FROM journal_entry_lines l
+      JOIN journal_entries je ON je.id = l.journal_entry_id
+      JOIN accounts a ON a.id = l.account_id
       ${whereClause}
       GROUP BY ${groupBy}
       ORDER BY ${groupBy}

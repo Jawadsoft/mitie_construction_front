@@ -5,9 +5,17 @@ interface ModalProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** Default md (max-w-lg). Use lg/xl for wider reports. */
+  size?: 'md' | 'lg' | 'xl';
 }
 
-export default function Modal({ title, onClose, children }: ModalProps) {
+const SIZE_CLASS = {
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+} as const;
+
+export default function Modal({ title, onClose, children, size = 'md' }: ModalProps) {
   useBodyScrollLock(true);
 
   return (
@@ -19,7 +27,7 @@ export default function Modal({ title, onClose, children }: ModalProps) {
       onWheel={(e) => e.stopPropagation()}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto overscroll-contain"
+        className={`bg-white rounded-xl shadow-2xl w-full ${SIZE_CLASS[size]} max-h-[90vh] overflow-y-auto overscroll-contain`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white z-10">

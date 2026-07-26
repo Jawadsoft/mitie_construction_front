@@ -21,6 +21,11 @@ export class ProjectsController {
     return this.projectsService.findAll();
   }
 
+  @Get(':id/activity')
+  getActivity(@Param('id') id: string) {
+    return this.projectsService.getActivityLog(id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.projectsService.findOne(id);

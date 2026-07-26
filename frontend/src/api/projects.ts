@@ -122,6 +122,8 @@ export interface Project {
     total_spent?: number;
     total_collected?: number;
     sold_value?: number;
+    profit?: number;
+    profit_margin_pct?: number;
     fund_receipts?: number;
     budget_used_pct?: number;
     collection_pct?: number;
@@ -166,6 +168,30 @@ export async function getProjects(): Promise<Project[]> {
 export async function getProject(id: string): Promise<Project> {
   const res = await fetch(`${API}/api/projects/${id}`, { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch project');
+  return res.json();
+}
+
+export interface ProjectActivityItem {
+  occurred_at: string;
+  category: string;
+  action: string;
+  description: string;
+  amount: number | null;
+  reference: string | null;
+  entity_type: string;
+  entity_id: string | null;
+}
+
+export interface ProjectActivityLog {
+  project_id: string;
+  project_name: string;
+  total: number;
+  activities: ProjectActivityItem[];
+}
+
+export async function getProjectActivity(id: string): Promise<ProjectActivityLog> {
+  const res = await fetch(`${API}/api/projects/${id}/activity`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to fetch project activity log'));
   return res.json();
 }
 

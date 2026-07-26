@@ -551,29 +551,196 @@ export class AccountingService implements OnModuleInit {
     return q.getRawMany();
   }
 
-  async getGeneralLedger(account_id: string, from?: string, to?: string) {
+  /** Recursively collect account id + all descendant ids. */
+  private async getAccountIdsWithDescendants(accountId: string): Promise<string[]> {
+    const all = await this.accountsRepo.find({ select: ['id', 'parent_account_id'] });
+    const childrenByParent = new Map<string, string[]>();
+    for (const a of all) {
+      if (!a.parent_account_id) continue;
+      const pid = String(a.parent_account_id);
+      const list = childrenByParent.get(pid) ?? [];
+      list.push(String(a.id));
+      childrenByParent.set(pid, list);
+    }
+    const ids: string[] = [];
+    const stack = [String(accountId)];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (ids.includes(id)) continue;
+      ids.push(id);
+      for (const child of childrenByParent.get(id) ?? []) stack.push(child);
+    }
+    return ids;
+  }
+
+  private balanceSide(amount: number, creditNormal: boolean): 'Dr' | 'Cr' | '' {
+    if (Math.abs(amount) < 0.0001) return '';
+    if (creditNormal) return amount >= 0 ? 'Cr' : 'Dr';
+    return amount >= 0 ? 'Dr' : 'Cr';
+  }
+
+  private displayBalance(signed: number): number {
+    return Math.round(Math.abs(signed) * 100) / 100;
+  }
+
+  /**
+   * Standard general ledger for a specific account or head account (with children).
+   * Returns opening balance, period lines, running balance, and totals.
+   */
+  async getGeneralLedger(
+    account_id: string,
+    from?: string,
+    to?: string,
+    includeChildren?: boolean,
+  ) {
     if (!account_id) throw new BadRequestException('account_id is required');
+
+    const account = await this.accountsRepo.findOne({ where: { id: account_id } });
+    if (!account) throw new NotFoundException('Account not found');
+
+    const childCount = await this.accountsRepo.count({
+      where: { parent_account_id: account_id },
+    });
+    const isHead = childCount > 0;
+    const rollup = includeChildren === undefined ? isHead : includeChildren;
+    const accountIds = rollup
+      ? await this.getAccountIdsWithDescendants(account_id)
+      : [String(account_id)];
+
+    const creditNormal = ['LIABILITY', 'EQUITY', 'INCOME'].includes(account.type);
+
+    // Opening balance (activity before `from`)
+    let openingSigned = 0;
+    if (from) {
+      const opening = await this.jelRepo
+        .createQueryBuilder('l')
+        .innerJoin('l.journal_entry', 'je')
+        .where('l.account_id IN (:...ids)', { ids: accountIds })
+        .andWhere('je.status = :status', { status: 'Posted' })
+        .andWhere('je.entry_date < :from', { from })
+        .select(
+          `COALESCE(SUM(CASE WHEN l.dr_cr='DEBIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END), 0)`,
+          'total_debit',
+        )
+        .addSelect(
+          `COALESCE(SUM(CASE WHEN l.dr_cr='CREDIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END), 0)`,
+          'total_credit',
+        )
+        .getRawOne();
+      const od = Number(opening?.total_debit ?? 0);
+      const oc = Number(opening?.total_credit ?? 0);
+      openingSigned = creditNormal ? oc - od : od - oc;
+    }
+
     const q = this.jelRepo
       .createQueryBuilder('l')
       .innerJoin('l.journal_entry', 'je')
-      .where('l.account_id = :aid', { aid: account_id })
+      .innerJoin('l.account', 'a')
+      .where('l.account_id IN (:...ids)', { ids: accountIds })
       .andWhere('je.status = :status', { status: 'Posted' })
       .orderBy('je.entry_date', 'ASC')
       .addOrderBy('je.id', 'ASC')
-      .select('je.entry_date', 'entry_date')
+      .addOrderBy('l.id', 'ASC')
+      // Cast to text so Node does not shift DATE into a UTC Date (wrong day in PKT)
+      .select(`TO_CHAR(je.entry_date::date, 'YYYY-MM-DD')`, 'entry_date')
       .addSelect('je.reference_no', 'reference_no')
       .addSelect('je.description', 'description')
+      .addSelect('l.narration', 'narration')
       .addSelect('je.id', 'journal_entry_id')
+      .addSelect('a.id', 'account_id')
+      .addSelect('a.code', 'account_code')
+      .addSelect('a.name', 'account_name')
       .addSelect(`CASE WHEN l.dr_cr='DEBIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END`, 'debit')
       .addSelect(`CASE WHEN l.dr_cr='CREDIT' THEN CAST(l.amount AS NUMERIC) ELSE 0 END`, 'credit');
     if (from) q.andWhere('je.entry_date >= :from', { from });
     if (to) q.andWhere('je.entry_date <= :to', { to });
-    const rows = await q.getRawMany();
-    let running = 0;
-    return rows.map((r) => {
-      running += Number(r.debit) - Number(r.credit);
-      return { ...r, running_balance: running };
-    });
+
+    const rawRows = await q.getRawMany();
+    let running = openingSigned;
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    const rows: Array<Record<string, unknown>> = [];
+
+    if (from) {
+      let openDebit = '0';
+      let openCredit = '0';
+      if (openingSigned > 0) {
+        if (creditNormal) openCredit = String(this.displayBalance(openingSigned));
+        else openDebit = String(this.displayBalance(openingSigned));
+      } else if (openingSigned < 0) {
+        if (creditNormal) openDebit = String(this.displayBalance(openingSigned));
+        else openCredit = String(this.displayBalance(openingSigned));
+      }
+      rows.push({
+        entry_date: from,
+        reference_no: null,
+        voucher_no: 'Opening',
+        particular: 'Opening Balance',
+        description: 'Opening Balance',
+        narration: null,
+        journal_entry_id: null,
+        account_id: account.id,
+        account_code: account.code,
+        account_name: account.name,
+        debit: openDebit,
+        credit: openCredit,
+        running_balance: this.displayBalance(running),
+        balance_side: this.balanceSide(running, creditNormal),
+        is_opening: true,
+      });
+    }
+
+    for (const r of rawRows) {
+      const debit = Number(r.debit);
+      const credit = Number(r.credit);
+      totalDebit += debit;
+      totalCredit += credit;
+      const delta = creditNormal ? credit - debit : debit - credit;
+      running += delta;
+      const particular =
+        (r.narration && String(r.narration).trim()) ||
+        (r.description && String(r.description).trim()) ||
+        '-';
+      rows.push({
+        entry_date: r.entry_date,
+        reference_no: r.reference_no,
+        voucher_no: r.reference_no || (r.journal_entry_id ? `JE-${r.journal_entry_id}` : '-'),
+        particular,
+        description: r.description,
+        narration: r.narration,
+        journal_entry_id: r.journal_entry_id,
+        account_id: String(r.account_id),
+        account_code: r.account_code,
+        account_name: r.account_name,
+        debit: String(debit),
+        credit: String(credit),
+        running_balance: this.displayBalance(running),
+        balance_side: this.balanceSide(running, creditNormal),
+        is_opening: false,
+      });
+    }
+
+    return {
+      account: {
+        id: account.id,
+        code: account.code,
+        name: account.name,
+        type: account.type,
+        is_head: isHead,
+      },
+      include_children: rollup,
+      period: { from: from ?? null, to: to ?? null },
+      opening_balance: this.displayBalance(openingSigned),
+      opening_balance_side: this.balanceSide(openingSigned, creditNormal),
+      rows,
+      totals: {
+        debit: Math.round(totalDebit * 100) / 100,
+        credit: Math.round(totalCredit * 100) / 100,
+        closing_balance: this.displayBalance(running),
+        closing_balance_side: this.balanceSide(running, creditNormal),
+      },
+    };
   }
 
   async getBalanceSheet(as_of?: string) {

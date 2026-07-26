@@ -22,7 +22,7 @@ export interface ProjectProfitability {
 
 export interface ProfitLoss {
   period: { from: string; to: string };
-  revenue: { sales_collections: number; total: number };
+  revenue: { sales_passed: number; total: number };
   expenses: { by_category: { category: string; amount: number }[]; labour: number; total: number };
   gross_profit: number; gross_margin_pct: number; fund_in: number;
 }
