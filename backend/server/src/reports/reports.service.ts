@@ -144,6 +144,91 @@ export class ReportsService {
       WHERE 1=1 ${dateFilter('transaction_date')}
     `);
 
+    // Sold-unit profitability: sale price − allocated project cost share
+    // Cost share = project (expenses + labour + materials) allocated by area_sqft when
+    // every unit has area; otherwise equal share across all project units.
+    const sold_unit_rows = await this.q(`
+      WITH project_costs AS (
+        SELECT
+          p.id AS project_id,
+          COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+            + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
+            + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
+            AS total_cost,
+          (SELECT COUNT(*)::numeric FROM property_units pu0 WHERE pu0.project_id = p.id) AS unit_count,
+          (SELECT COUNT(*)::numeric FROM property_units pu1
+            WHERE pu1.project_id = p.id AND pu1.area_sqft IS NOT NULL AND CAST(pu1.area_sqft AS NUMERIC) > 0) AS units_with_area,
+          (SELECT COALESCE(SUM(CAST(pu2.area_sqft AS NUMERIC)), 0) FROM property_units pu2
+            WHERE pu2.project_id = p.id AND pu2.area_sqft IS NOT NULL AND CAST(pu2.area_sqft AS NUMERIC) > 0) AS total_area
+        FROM projects p
+      )
+      SELECT
+        s.id::text AS sale_id,
+        s.sale_date::text AS sale_date,
+        s.status AS sale_status,
+        p.id::text AS project_id,
+        p.name AS project_name,
+        pu.id::text AS unit_id,
+        pu.unit_number,
+        pu.unit_type,
+        c.name AS customer_name,
+        CAST(s.total_sale_price AS NUMERIC) AS sale_price,
+        CAST(s.total_paid AS NUMERIC) AS collected,
+        CAST(s.total_sale_price AS NUMERIC) - CAST(s.total_paid AS NUMERIC) AS balance,
+        CASE
+          WHEN pc.unit_count > 0
+            AND pc.units_with_area = pc.unit_count
+            AND pc.total_area > 0
+            AND pu.area_sqft IS NOT NULL
+            AND CAST(pu.area_sqft AS NUMERIC) > 0
+          THEN ROUND(pc.total_cost * (CAST(pu.area_sqft AS NUMERIC) / pc.total_area), 2)
+          WHEN pc.unit_count > 0
+          THEN ROUND(pc.total_cost / pc.unit_count, 2)
+          ELSE 0
+        END AS allocated_cost
+      FROM sales s
+      JOIN property_units pu ON pu.id = s.property_unit_id
+      JOIN projects p ON p.id = pu.project_id
+      JOIN customers c ON c.id = s.customer_id
+      LEFT JOIN project_costs pc ON pc.project_id = p.id
+      WHERE s.status != 'Cancelled' ${dateFilter('s.sale_date')}
+      ORDER BY s.sale_date DESC, s.id DESC
+    `);
+
+    const sold_units = sold_unit_rows.map((r: any) => {
+      const sale_price = Number(r.sale_price);
+      const allocated_cost = Number(r.allocated_cost);
+      const profit = Math.round((sale_price - allocated_cost) * 100) / 100;
+      const margin_pct = sale_price > 0 ? Math.round((profit / sale_price) * 100) : 0;
+      return {
+        sale_id: r.sale_id,
+        sale_date: r.sale_date,
+        sale_status: r.sale_status,
+        project_id: r.project_id,
+        project_name: r.project_name,
+        unit_id: r.unit_id,
+        unit_number: r.unit_number,
+        unit_type: r.unit_type,
+        customer_name: r.customer_name,
+        sale_price,
+        collected: Number(r.collected),
+        balance: Number(r.balance),
+        allocated_cost,
+        profit,
+        margin_pct,
+      };
+    });
+
+    const sold_units_summary = {
+      count: sold_units.length,
+      sale_price: sold_units.reduce((s, u) => s + u.sale_price, 0),
+      collected: sold_units.reduce((s, u) => s + u.collected, 0),
+      allocated_cost: sold_units.reduce((s, u) => s + u.allocated_cost, 0),
+      profit: sold_units.reduce((s, u) => s + u.profit, 0),
+    };
+    sold_units_summary.profit = Math.round(sold_units_summary.profit * 100) / 100;
+    sold_units_summary.allocated_cost = Math.round(sold_units_summary.allocated_cost * 100) / 100;
+
     const total_expenses = expenses_by_cat.reduce((s: number, r: any) => s + Number(r.total), 0);
     const total_labour = Number(labour_total.total);
     const total_revenue = Number(revenue.total);
@@ -163,6 +248,14 @@ export class ReportsService {
       gross_profit,
       gross_margin_pct: total_revenue > 0 ? Math.round((gross_profit / total_revenue) * 100) : 0,
       fund_in: Number(fund_in.total),
+      sold_units,
+      sold_units_summary: {
+        ...sold_units_summary,
+        margin_pct:
+          sold_units_summary.sale_price > 0
+            ? Math.round((sold_units_summary.profit / sold_units_summary.sale_price) * 100)
+            : 0,
+      },
     };
   }
 

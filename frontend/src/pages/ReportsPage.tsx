@@ -99,12 +99,45 @@ export default function ReportsPage() {
           <button onClick={() => {
             if (tab === 'profitability' && profitData.length) exportCSV(`report-profitability`, profitData as any);
             else if (tab === 'budget' && budgetData.length) exportCSV(`report-budget`, budgetData as any);
+            else if (tab === 'pl' && plData?.sold_units?.length) {
+              exportCSV(
+                `report-pl-sold-units`,
+                plData.sold_units.map((u) => ({
+                  Date: String(u.sale_date).slice(0, 10),
+                  Project: u.project_name,
+                  Unit: u.unit_number,
+                  Type: u.unit_type || '',
+                  Customer: u.customer_name,
+                  SalePrice: u.sale_price,
+                  Collected: u.collected,
+                  CostShare: u.allocated_cost,
+                  Profit: u.profit,
+                  MarginPct: u.margin_pct,
+                })) as any,
+              );
+            }
             else if (tab === 'receivables' && receivablesData.length) exportCSV(`report-receivables`, receivablesData as any);
             else if (tab === 'payables' && payablesData.length) exportCSV(`report-payables`, payablesData as any);
           }} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
           <button onClick={() => {
             if (tab === 'profitability') exportPDF('Profitability Report', ['Project','Revenue','Cost','Profit','Margin%'], profitData.map((r: any) => [r.project_name, Number(r.total_revenue).toLocaleString(), Number(r.total_cost).toLocaleString(), Number(r.profit).toLocaleString(), r.profit_margin + '%']));
             else if (tab === 'budget') exportPDF('Budget vs Actual', ['Project','Budget','Actual','Variance','Var%'], budgetData.map((r: any) => [r.project_name ?? r.stage_name, Number(r.total_budget).toLocaleString(), Number(r.actual_cost).toLocaleString(), Number(r.variance).toLocaleString(), r.variance_percent + '%']));
+            else if (tab === 'pl' && plData?.sold_units) {
+              exportPDF(
+                'Sold Unit Profitability',
+                ['Date', 'Project', 'Unit', 'Customer', 'Sale', 'Cost', 'Profit', 'Margin%'],
+                plData.sold_units.map((u) => [
+                  String(u.sale_date).slice(0, 10),
+                  u.project_name,
+                  u.unit_number,
+                  u.customer_name,
+                  u.sale_price.toLocaleString(),
+                  u.allocated_cost.toLocaleString(),
+                  u.profit.toLocaleString(),
+                  `${u.margin_pct}%`,
+                ]),
+              );
+            }
             else if (tab === 'receivables') exportPDF('Receivables Aging', ['Customer','Unit','Sale Price','Paid','Balance','Status'], receivablesData.map((r: any) => [r.customer_name, r.unit_number, Number(r.total_sale_price).toLocaleString(), Number(r.total_paid).toLocaleString(), Number(r.balance).toLocaleString(), r.status]));
             else if (tab === 'payables') exportPDF('Supplier Payables', ['Supplier','Total Orders','Amount (PKR)'], payablesData.map((r: any) => [r.supplier_name, r.total_orders, Number(r.total_amount).toLocaleString()]));
           }} className="border border-red-500 text-red-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-50">↓ PDF</button>
@@ -319,6 +352,84 @@ export default function ReportsPage() {
                     </div>
                     <p className="text-sm mt-1 text-gray-500">Margin: {plData.gross_margin_pct}%</p>
                   </div>
+                </div>
+              </div>
+
+              {/* Sold unit profitability */}
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b bg-slate-50 flex flex-wrap justify-between gap-2 items-baseline">
+                  <div>
+                    <h3 className="font-bold text-gray-800">Sold Unit Profitability</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Sale price − share of project cost (expenses + labour + materials). Cost shared by area when all units have sqft; otherwise equal per unit.
+                    </p>
+                  </div>
+                  {plData.sold_units_summary && (
+                    <p className={`text-sm font-semibold ${plData.sold_units_summary.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {plData.sold_units_summary.count} unit(s) · Profit PKR {fmt(plData.sold_units_summary.profit)} ({plData.sold_units_summary.margin_pct}%)
+                    </p>
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Date</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Project</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Unit</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Customer</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium">Sale Price</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium">Collected</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium">Cost Share</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium">Profit</th>
+                        <th className="px-3 py-2.5 text-right text-gray-600 font-medium">Margin</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!plData.sold_units?.length ? (
+                        <tr>
+                          <td colSpan={9} className="text-center text-gray-400 py-10">No sold units in this period.</td>
+                        </tr>
+                      ) : (
+                        plData.sold_units.map((u) => (
+                          <tr key={u.sale_id} className="border-t hover:bg-gray-50">
+                            <td className="px-3 py-2 whitespace-nowrap">{String(u.sale_date).slice(0, 10)}</td>
+                            <td className="px-3 py-2">{u.project_name}</td>
+                            <td className="px-3 py-2 font-medium">
+                              {u.unit_number}
+                              {u.unit_type ? <span className="text-xs text-gray-400 ml-1">{u.unit_type}</span> : null}
+                            </td>
+                            <td className="px-3 py-2">{u.customer_name}</td>
+                            <td className="px-3 py-2 text-right font-mono">{fmt(u.sale_price)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-slate-600">{fmt(u.collected)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-red-600">{fmt(u.allocated_cost)}</td>
+                            <td className={`px-3 py-2 text-right font-mono font-semibold ${u.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                              {u.profit >= 0 ? '+' : ''}{fmt(u.profit)}
+                            </td>
+                            <td className={`px-3 py-2 text-right font-medium ${u.margin_pct >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                              {u.margin_pct}%
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {plData.sold_units_summary && plData.sold_units?.length > 0 && (
+                      <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                        <tr>
+                          <td colSpan={4} className="px-3 py-2.5 font-semibold text-slate-700">
+                            Totals ({plData.sold_units_summary.count} sold)
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold">{fmt(plData.sold_units_summary.sale_price)}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold">{fmt(plData.sold_units_summary.collected)}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-red-700">{fmt(plData.sold_units_summary.allocated_cost)}</td>
+                          <td className={`px-3 py-2.5 text-right font-mono font-semibold ${plData.sold_units_summary.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {plData.sold_units_summary.profit >= 0 ? '+' : ''}{fmt(plData.sold_units_summary.profit)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-semibold">{plData.sold_units_summary.margin_pct}%</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
                 </div>
               </div>
             </div>

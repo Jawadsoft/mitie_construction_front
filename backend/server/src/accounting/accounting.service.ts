@@ -1261,6 +1261,7 @@ export class AccountingService implements OnModuleInit {
       .createQueryBuilder('l')
       .innerJoin('l.journal_entry', 'je')
       .innerJoin('l.account', 'a')
+      .leftJoin('projects', 'p', 'p.id = je.project_id')
       .where('l.account_id IN (:...ids)', { ids: accountIds })
       .andWhere('je.status = :status', { status: 'Posted' })
       .orderBy('je.entry_date', 'ASC')
@@ -1272,6 +1273,8 @@ export class AccountingService implements OnModuleInit {
       .addSelect('je.description', 'description')
       .addSelect('l.narration', 'narration')
       .addSelect('je.id', 'journal_entry_id')
+      .addSelect('je.project_id', 'project_id')
+      .addSelect('p.name', 'project_name')
       .addSelect('a.id', 'account_id')
       .addSelect('a.code', 'account_code')
       .addSelect('a.name', 'account_name')
@@ -1305,6 +1308,8 @@ export class AccountingService implements OnModuleInit {
         description: 'Opening Balance',
         narration: null,
         journal_entry_id: null,
+        project_id: null,
+        project_name: null,
         account_id: account.id,
         account_code: account.code,
         account_name: account.name,
@@ -1335,6 +1340,8 @@ export class AccountingService implements OnModuleInit {
         description: r.description,
         narration: r.narration,
         journal_entry_id: r.journal_entry_id,
+        project_id: r.project_id != null ? String(r.project_id) : null,
+        project_name: r.project_name ?? null,
         account_id: String(r.account_id),
         account_code: r.account_code,
         account_name: r.account_name,

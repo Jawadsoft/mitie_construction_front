@@ -20,11 +20,38 @@ export interface ProjectProfitability {
   profit: number; profit_margin: number; total_units: number; sold_units: number;
 }
 
+export interface SoldUnitProfit {
+  sale_id: string;
+  sale_date: string;
+  sale_status: string;
+  project_id: string;
+  project_name: string;
+  unit_id: string;
+  unit_number: string;
+  unit_type: string | null;
+  customer_name: string;
+  sale_price: number;
+  collected: number;
+  balance: number;
+  allocated_cost: number;
+  profit: number;
+  margin_pct: number;
+}
+
 export interface ProfitLoss {
   period: { from: string; to: string };
   revenue: { sales_passed: number; total: number };
   expenses: { by_category: { category: string; amount: number }[]; labour: number; total: number };
   gross_profit: number; gross_margin_pct: number; fund_in: number;
+  sold_units: SoldUnitProfit[];
+  sold_units_summary: {
+    count: number;
+    sale_price: number;
+    collected: number;
+    allocated_cost: number;
+    profit: number;
+    margin_pct: number;
+  };
 }
 
 export interface SupplierPayable {

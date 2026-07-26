@@ -389,6 +389,7 @@ export default function AccountingPage() {
           Date: formatDate(r.entry_date),
           Voucher: r.voucher_no,
           Particulars: r.particular,
+          Project: r.project_name || '',
           Account: `${r.account_code} ${r.account_name}`,
           Debit: Number(r.debit || 0).toFixed(2),
           Credit: Number(r.credit || 0).toFixed(2),
@@ -713,7 +714,7 @@ export default function AccountingPage() {
           };
           const bal = (amount: number, side: string) =>
             side ? `${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${side}` : '—';
-          const colSpan = showAccountCol ? 8 : 7;
+          const colSpan = showAccountCol ? 9 : 8;
 
           return (
             <div className="space-y-3">
@@ -827,6 +828,7 @@ export default function AccountingPage() {
                         <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-28">Date</th>
                         <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-32">Voucher No.</th>
                         <th className="px-3 py-2.5 text-left text-gray-600 font-medium">Particulars</th>
+                        <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-40">Project</th>
                         {showAccountCol && (
                           <th className="px-3 py-2.5 text-left text-gray-600 font-medium w-40">Account</th>
                         )}
@@ -852,6 +854,7 @@ export default function AccountingPage() {
                             <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.entry_date)}</td>
                             <td className="px-3 py-2 font-mono text-xs">{r.voucher_no || '—'}</td>
                             <td className="px-3 py-2">{r.particular || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600">{r.project_name || '—'}</td>
                             {showAccountCol && (
                               <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
                                 {r.account_code} {r.account_name}
@@ -923,7 +926,7 @@ export default function AccountingPage() {
                     {glReport && glReport.rows.length > 0 && (
                       <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                         <tr>
-                          <td colSpan={showAccountCol ? 4 : 3} className="px-3 py-2.5 font-semibold text-slate-700">
+                          <td colSpan={showAccountCol ? 5 : 4} className="px-3 py-2.5 font-semibold text-slate-700">
                             Period totals / Closing balance
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold">

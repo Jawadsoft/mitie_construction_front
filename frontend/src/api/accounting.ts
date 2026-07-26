@@ -49,6 +49,8 @@ export interface GeneralLedgerRow {
   description: string | null;
   narration: string | null;
   journal_entry_id: string | null;
+  project_id: string | null;
+  project_name: string | null;
   account_id: string;
   account_code: string;
   account_name: string;
