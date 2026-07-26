@@ -652,7 +652,7 @@ export default function AccountingPage() {
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Debit</th>
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-28">Credit</th>
                         <th className="px-3 py-2.5 text-right text-gray-600 font-medium w-36">Balance</th>
-                        <th className="px-3 py-2.5 text-center text-gray-600 font-medium w-28">Actions</th>
+                        <th className="px-3 py-2.5 text-center text-gray-600 font-medium w-36">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -699,6 +699,38 @@ export default function AccountingPage() {
                                     onClick={() => openEditEntry(r.journal_entry_id!)}
                                   >
                                     Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-red-600 hover:underline"
+                                    onClick={async () => {
+                                      const ok = await confirm({
+                                        title: 'Delete journal',
+                                        message: `Delete journal ${r.voucher_no || `JE-${r.journal_entry_id}`}? This removes the full entry from the ledger.`,
+                                        confirmLabel: 'Delete',
+                                        danger: true,
+                                      });
+                                      if (!ok) return;
+                                      try {
+                                        await deleteJournalEntry(r.journal_entry_id!);
+                                        notify.success('Journal deleted');
+                                        await load();
+                                        if (glAccountId) {
+                                          setGlReport(
+                                            await getGeneralLedger(
+                                              glAccountId,
+                                              glFrom || undefined,
+                                              glTo || undefined,
+                                              glIncludeChildren,
+                                            ),
+                                          );
+                                        }
+                                      } catch (err: unknown) {
+                                        setError(notifyError(err, 'Delete failed'));
+                                      }
+                                    }}
+                                  >
+                                    Delete
                                   </button>
                                 </span>
                               )}
