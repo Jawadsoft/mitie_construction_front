@@ -5,7 +5,7 @@ import {
   getSales, getSale, createSale, deleteSale, collectSalePayment, adjustSaleCollection
 } from '../api/sales';
 import type { Customer, PropertyUnit, Sale } from '../api/sales';
-import { exportCSV } from '../utils/exportUtils';
+import { exportCSV, exportExcel } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import { getBankAccounts } from '../api/accounting';
@@ -183,13 +183,21 @@ export default function SalesPage() {
     }
   };
 
+  /** Sales with balance still due and no payment received yet */
+  const dueForFirstCollection = sales.filter(
+    (s) =>
+      s.status !== 'Cancelled' &&
+      Number(s.total_paid) <= 0.009 &&
+      Number(s.total_sale_price) - Number(s.total_paid) > 0.009,
+  );
+  /** Payment already received (shown under Recorded / payment rcvd) */
+  const collectedSales = sales.filter(
+    (s) => s.status !== 'Cancelled' && Number(s.total_paid) > 0.009,
+  );
   const outstandingSales = sales.filter(
     (s) =>
       s.status !== 'Cancelled' &&
       Number(s.total_sale_price) - Number(s.total_paid) > 0.009,
-  );
-  const collectedSales = sales.filter(
-    (s) => s.status !== 'Cancelled' && Number(s.total_paid) > 0.009,
   );
 
   const handleExportCollections = () => {
@@ -480,7 +488,49 @@ export default function SalesPage() {
         </div>
         <div className="flex gap-2 flex-wrap">
           {(tab === 'sales' || tab === 'collections') && <>
-            <button onClick={tab === 'sales' ? handleExportSalesCSV : handleExportCollections} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
+            <button
+              type="button"
+              onClick={tab === 'sales' ? handleExportSalesCSV : handleExportCollections}
+              className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50"
+            >
+              ↓ CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (tab === 'sales') {
+                  const rows = sales.map((s) => ({
+                    'Sale#': s.id,
+                    Customer: s.customer?.name ?? '',
+                    Unit: s.property_unit?.unit_number ?? '',
+                    Date: formatDate(s.sale_date),
+                    Price: s.total_sale_price,
+                    Paid: s.total_paid,
+                    Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toFixed(2),
+                    Status: s.status,
+                  }));
+                  if (!rows.length) { notify.info('Nothing to export'); return; }
+                  exportExcel('sales', rows);
+                } else {
+                  const rows = outstandingSales.map((s) => ({
+                    'Sale#': s.id,
+                    Customer: s.customer?.name ?? '',
+                    Unit: s.property_unit?.unit_number ?? '',
+                    'Sale Date': formatDate(s.sale_date),
+                    Price: s.total_sale_price,
+                    Collected: s.total_paid,
+                    Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toFixed(2),
+                    Status: s.status,
+                  }));
+                  if (!rows.length) { notify.info('Nothing to export'); return; }
+                  exportExcel('collections', rows);
+                }
+                notify.success('Exported Excel');
+              }}
+              className="border border-emerald-700 text-emerald-800 px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-50"
+            >
+              ↓ Excel
+            </button>
           </>}
           {tab === 'inventory' && <button onClick={() => { setEditingUnit(null); setUnitForm({ project_id: '', unit_number: '', unit_type: '', area_sqft: '', floor: '', list_price: '', notes: '' }); setError(''); setShowModal('unit'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Unit</button>}
           {tab === 'customers' && <button onClick={() => { setEditingCustomer(null); setCustForm({ name: '', phone: '', email: '', cnic: '', address: '' }); setError(''); setShowModal('customer'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Customer</button>}
@@ -592,7 +642,7 @@ export default function SalesPage() {
             <div className="px-4 py-3 border-b bg-slate-50">
               <p className="text-sm font-medium text-slate-800">Due for collection</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Outstanding sale balances — use Collect to receive payment against a sale.
+                Sales with no payment received yet — use Collect for the first receipt.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -604,20 +654,19 @@ export default function SalesPage() {
                     <th className="px-4 py-3 text-left text-gray-600">Unit</th>
                     <th className="px-4 py-3 text-left text-gray-600">Sale Date</th>
                     <th className="px-4 py-3 text-right text-gray-600">Sale Price</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Collected</th>
                     <th className="px-4 py-3 text-right text-gray-600">Balance Due</th>
                     <th className="px-4 py-3 text-center text-gray-600">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {outstandingSales.length === 0 ? (
+                  {dueForFirstCollection.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center text-gray-400 py-8">
-                        No outstanding sales to collect against.
+                      <td colSpan={7} className="text-center text-gray-400 py-8">
+                        No unpaid sales waiting for first collection.
                       </td>
                     </tr>
                   ) : (
-                    outstandingSales.map((s) => {
+                    dueForFirstCollection.map((s) => {
                       const balance = Number(s.total_sale_price) - Number(s.total_paid);
                       return (
                         <tr key={s.id} className="border-t hover:bg-gray-50">
@@ -626,27 +675,15 @@ export default function SalesPage() {
                           <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
                           <td className="px-4 py-3">{formatDate(s.sale_date)}</td>
                           <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-mono text-red-600 font-medium">{balance.toLocaleString()}</td>
                           <td className="px-4 py-3 text-center">
-                            <div className="inline-flex gap-1.5">
-                              {Number(s.total_paid) > 0.009 && (
-                                <button
-                                  type="button"
-                                  onClick={() => openEditCollection(s)}
-                                  className="text-xs rounded border border-blue-200 text-blue-700 px-2.5 py-1.5 hover:bg-blue-50"
-                                >
-                                  Edit
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => openCollect(s)}
-                                className="text-xs rounded bg-green-600 text-white px-2.5 py-1.5 hover:bg-green-700"
-                              >
-                                Collect
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openCollect(s)}
+                              className="text-xs rounded bg-green-600 text-white px-2.5 py-1.5 hover:bg-green-700"
+                            >
+                              Collect
+                            </button>
                           </td>
                         </tr>
                       );
@@ -659,9 +696,9 @@ export default function SalesPage() {
 
           <div className="bg-white rounded-xl border overflow-hidden">
             <div className="px-4 py-3 border-b bg-slate-50">
-              <p className="text-sm font-medium text-slate-800">Recorded collections</p>
+              <p className="text-sm font-medium text-slate-800">Payment received</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Sales with money already collected — Edit to change the total collected amount.
+                Collections already recorded — Edit total, or Collect more if a balance remains.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -696,13 +733,24 @@ export default function SalesPage() {
                           <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-mono text-red-600">{balance.toLocaleString()}</td>
                           <td className="px-4 py-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => openEditCollection(s)}
-                              className="text-xs rounded border border-blue-200 text-blue-700 px-3 py-1.5 hover:bg-blue-50"
-                            >
-                              Edit Collection
-                            </button>
+                            <div className="inline-flex gap-1.5 justify-center">
+                              <button
+                                type="button"
+                                onClick={() => openEditCollection(s)}
+                                className="text-xs rounded border border-blue-200 text-blue-700 px-2.5 py-1.5 hover:bg-blue-50"
+                              >
+                                Edit
+                              </button>
+                              {balance > 0.009 && (
+                                <button
+                                  type="button"
+                                  onClick={() => openCollect(s)}
+                                  className="text-xs rounded bg-green-600 text-white px-2.5 py-1.5 hover:bg-green-700"
+                                >
+                                  Collect more
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

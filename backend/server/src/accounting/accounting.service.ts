@@ -202,9 +202,34 @@ export class AccountingService implements OnModuleInit {
   }
 
   async findJournalEntries(project_id?: string) {
-    const q = this.jeRepo.createQueryBuilder('je').orderBy('je.entry_date', 'DESC');
-    if (project_id) q.andWhere('je.project_id = :pid', { pid: project_id });
-    return q.getMany();
+    const params: unknown[] = [];
+    let where = '';
+    if (project_id) {
+      params.push(project_id);
+      where = `WHERE je.project_id = $${params.length}`;
+    }
+    const rows: Array<Record<string, unknown>> = await this.dataSource.query(
+      `
+      SELECT
+        je.id::text AS id,
+        je.entry_date::text AS entry_date,
+        je.reference_no,
+        je.description,
+        je.status,
+        je.project_id::text AS project_id,
+        je.created_at,
+        je.updated_at,
+        COALESCE(SUM(CASE WHEN l.dr_cr = 'DEBIT' THEN l.amount ELSE 0 END), 0)::text AS total_debit,
+        COALESCE(SUM(CASE WHEN l.dr_cr = 'CREDIT' THEN l.amount ELSE 0 END), 0)::text AS total_credit
+      FROM journal_entries je
+      LEFT JOIN journal_entry_lines l ON l.journal_entry_id = je.id
+      ${where}
+      GROUP BY je.id
+      ORDER BY je.entry_date DESC, je.id DESC
+      `,
+      params,
+    );
+    return rows;
   }
 
   async findJournalEntry(id: string) {

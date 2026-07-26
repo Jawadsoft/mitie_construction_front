@@ -37,6 +37,7 @@ import Modal from '../components/Modal';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { formatDate } from '../utils/date';
+import { exportCSV, exportExcel } from '../utils/exportUtils';
 
 type Tab = 'journal' | 'accounts' | 'trial-balance' | 'general-ledger' | 'balance-sheet' | 'bank-recon';
 
@@ -291,11 +292,38 @@ export default function AccountingPage() {
                 <tr key={l.id} className="border-t">
                   <td className="px-4 py-3 font-medium">{l.account?.code} – {l.account?.name}</td>
                   <td className="px-4 py-3">{l.dr_cr}</td>
-                  <td className="px-4 py-3 text-right font-mono">{l.dr_cr === 'DEBIT' ? Number(l.amount).toLocaleString() : '-'}</td>
-                  <td className="px-4 py-3 text-right font-mono">{l.dr_cr === 'CREDIT' ? Number(l.amount).toLocaleString() : '-'}</td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {l.dr_cr === 'DEBIT'
+                      ? Number(l.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {l.dr_cr === 'CREDIT'
+                      ? Number(l.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
+            {(selectedEntry.lines?.length ?? 0) > 0 && (
+              <tfoot className="bg-slate-50 border-t">
+                <tr>
+                  <td colSpan={2} className="px-4 py-2.5 text-sm font-semibold text-slate-700">Totals</td>
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold">
+                    {(selectedEntry.lines ?? [])
+                      .filter((l) => l.dr_cr === 'DEBIT')
+                      .reduce((s, l) => s + Number(l.amount || 0), 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold">
+                    {(selectedEntry.lines ?? [])
+                      .filter((l) => l.dr_cr === 'CREDIT')
+                      .reduce((s, l) => s + Number(l.amount || 0), 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
@@ -311,6 +339,133 @@ export default function AccountingPage() {
     ['bank-recon', 'Bank Recon'],
   ];
 
+  const buildExportRows = (): { filename: string; rows: Record<string, unknown>[] } | null => {
+    if (tab === 'journal') {
+      if (!entries.length) return null;
+      return {
+        filename: 'journal-entries',
+        rows: entries.map((e) => ({
+          'JE#': e.id,
+          Date: formatDate(e.entry_date),
+          Reference: e.reference_no ?? '',
+          Description: e.description ?? '',
+          Debit: Number(e.total_debit || 0).toFixed(2),
+          Credit: Number(e.total_credit || 0).toFixed(2),
+          Status: e.status,
+        })),
+      };
+    }
+    if (tab === 'accounts') {
+      if (!accounts.length) return null;
+      return {
+        filename: 'chart-of-accounts',
+        rows: accounts.map((a) => ({
+          Code: a.code,
+          Name: a.name,
+          Type: a.type,
+          Active: a.is_active === false ? 'No' : 'Yes',
+          'Parent ID': a.parent_account_id ?? '',
+        })),
+      };
+    }
+    if (tab === 'trial-balance') {
+      if (!trialBalance.length) return null;
+      return {
+        filename: 'trial-balance',
+        rows: trialBalance.map((r) => ({
+          Code: r.code,
+          Name: r.name,
+          Type: r.type,
+          Debit: Number(r.total_debit || 0).toFixed(2),
+          Credit: Number(r.total_credit || 0).toFixed(2),
+        })),
+      };
+    }
+    if (tab === 'general-ledger') {
+      if (!glReport?.rows?.length) return null;
+      return {
+        filename: `general-ledger-${glReport.account.code}`,
+        rows: glReport.rows.map((r) => ({
+          Date: formatDate(r.entry_date),
+          Voucher: r.voucher_no,
+          Particulars: r.particular,
+          Account: `${r.account_code} ${r.account_name}`,
+          Debit: Number(r.debit || 0).toFixed(2),
+          Credit: Number(r.credit || 0).toFixed(2),
+          Balance: Number(r.running_balance || 0).toFixed(2),
+          Side: r.balance_side,
+        })),
+      };
+    }
+    if (tab === 'balance-sheet' && balanceSheet) {
+      const rows: Record<string, unknown>[] = [];
+      for (const [section, list] of [
+        ['Asset', balanceSheet.assets],
+        ['Liability', balanceSheet.liabilities],
+        ['Equity', balanceSheet.equity],
+      ] as const) {
+        for (const r of list) {
+          rows.push({
+            Section: section,
+            Code: r.code,
+            Name: r.name,
+            Balance: Number(r.balance || 0).toFixed(2),
+          });
+        }
+      }
+      rows.push({
+        Section: 'Equity',
+        Code: 'NI',
+        Name: 'Net Income (plug)',
+        Balance: Number(balanceSheet.net_income || 0).toFixed(2),
+      });
+      rows.push({
+        Section: 'Totals',
+        Code: '',
+        Name: 'Total Assets',
+        Balance: Number(balanceSheet.total_assets || 0).toFixed(2),
+      });
+      rows.push({
+        Section: 'Totals',
+        Code: '',
+        Name: 'Total Liabilities',
+        Balance: Number(balanceSheet.total_liabilities || 0).toFixed(2),
+      });
+      rows.push({
+        Section: 'Totals',
+        Code: '',
+        Name: 'Total Equity',
+        Balance: Number(balanceSheet.total_equity || 0).toFixed(2),
+      });
+      return { filename: 'balance-sheet', rows };
+    }
+    if (tab === 'bank-recon') {
+      if (!statements.length) return null;
+      return {
+        filename: `bank-statements-${selectedBankId || 'all'}`,
+        rows: statements.map((s) => ({
+          Date: formatDate(s.statement_date),
+          Description: s.description ?? '',
+          Amount: Number(s.amount || 0).toFixed(2),
+          Reference: s.reference ?? '',
+          Reconciled: s.reconciled ? 'Yes' : 'No',
+        })),
+      };
+    }
+    return null;
+  };
+
+  const handleExport = (format: 'csv' | 'excel') => {
+    const data = buildExportRows();
+    if (!data) {
+      notify.info('Nothing to export on this tab');
+      return;
+    }
+    if (format === 'csv') exportCSV(data.filename, data.rows);
+    else exportExcel(data.filename, data.rows);
+    notify.success(`Exported ${data.rows.length} row(s) as ${format === 'csv' ? 'CSV' : 'Excel'}`);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -318,7 +473,25 @@ export default function AccountingPage() {
           <h1 className="text-2xl font-bold text-gray-800">Accounting</h1>
           <p className="text-sm text-gray-500">COA, journals, GL, balance sheet, bank reconciliation</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {tab !== 'bank-recon' || selectedBankId ? (
+            <>
+              <button
+                type="button"
+                onClick={() => handleExport('csv')}
+                className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50"
+              >
+                ↓ CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('excel')}
+                className="border border-emerald-700 text-emerald-800 px-3 py-2 rounded-lg text-sm font-medium hover:bg-emerald-50"
+              >
+                ↓ Excel
+              </button>
+            </>
+          ) : null}
           {tab === 'journal' && (
             <div className="flex gap-2">
               <button
@@ -399,19 +572,27 @@ export default function AccountingPage() {
                 <th className="px-4 py-3 text-left text-gray-600">Date</th>
                 <th className="px-4 py-3 text-left text-gray-600">Ref</th>
                 <th className="px-4 py-3 text-left text-gray-600">Description</th>
+                <th className="px-4 py-3 text-right text-gray-600">Debit</th>
+                <th className="px-4 py-3 text-right text-gray-600">Credit</th>
                 <th className="px-4 py-3 text-left text-gray-600">Status</th>
                 <th className="px-4 py-3 text-center text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
               {entries.length === 0 ? (
-                <tr><td colSpan={6} className="text-center text-gray-400 py-8">No journal entries yet.</td></tr>
+                <tr><td colSpan={8} className="text-center text-gray-400 py-8">No journal entries yet.</td></tr>
               ) : entries.map((e) => (
                 <tr key={e.id} className="border-t hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium cursor-pointer" onClick={() => viewEntry(e.id)}>JE-{e.id}</td>
                   <td className="px-4 py-3 cursor-pointer" onClick={() => viewEntry(e.id)}>{formatDate(e.entry_date)}</td>
                   <td className="px-4 py-3 text-xs font-mono text-gray-500 cursor-pointer" onClick={() => viewEntry(e.id)}>{e.reference_no ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600 cursor-pointer" onClick={() => viewEntry(e.id)}>{e.description ?? '-'}</td>
+                  <td className="px-4 py-3 text-right font-mono cursor-pointer" onClick={() => viewEntry(e.id)}>
+                    {Number(e.total_debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono cursor-pointer" onClick={() => viewEntry(e.id)}>
+                    {Number(e.total_credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${e.status === 'Posted' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>{e.status}</span>
                   </td>

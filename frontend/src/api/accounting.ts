@@ -26,6 +26,9 @@ export interface JournalEntry {
   status: string;
   project_id: string | null;
   lines?: JournalEntryLine[];
+  /** Present on list endpoint */
+  total_debit?: string | number;
+  total_credit?: string | number;
   created_at: string;
 }
 
