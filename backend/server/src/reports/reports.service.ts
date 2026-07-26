@@ -418,7 +418,9 @@ export class ReportsService {
 
   /**
    * Trailing partners equity — capital in per partner bank + shared P&L.
-   * Default partnership: 50:50 when there are two active partner banks.
+   * Only banks with remaining capital (opening and/or equity receipts) are partners.
+   * Deleted fund sources/receipts are excluded. Empty/duplicate banks with 0 capital are hidden.
+   * Sharing: 50:50 when exactly two capitalised partners remain.
    */
   async getPartnersEquity(as_of?: string) {
     const banks: Array<{
@@ -433,12 +435,11 @@ export class ReportsService {
       ORDER BY name ASC, id ASC
     `);
 
-    const partnerCount = banks.length;
-    const share_pct = partnerCount === 2 ? 50 : partnerCount > 0 ? Math.round((10000 / partnerCount)) / 100 : 0;
-
     // Net income from posted journals (same plug as balance sheet)
-    const dateClause = as_of ? `AND je.entry_date <= '${as_of}'` : '';
-    const [pl] = await this.q(`
+    const dateClause = as_of ? `AND je.entry_date <= $1` : '';
+    const plParams = as_of ? [as_of] : [];
+    const [pl] = await this.q(
+      `
       SELECT
         COALESCE(SUM(CASE WHEN a.type = 'INCOME' AND l.dr_cr = 'CREDIT' THEN CAST(l.amount AS NUMERIC)
                           WHEN a.type = 'INCOME' AND l.dr_cr = 'DEBIT' THEN -CAST(l.amount AS NUMERIC)
@@ -450,10 +451,13 @@ export class ReportsService {
       JOIN journal_entries je ON je.id = l.journal_entry_id
       JOIN accounts a ON a.id = l.account_id
       WHERE je.status = 'Posted' ${dateClause}
-    `);
+    `,
+      plParams,
+    );
     const net_income = Number(pl?.income ?? 0) - Number(pl?.expense ?? 0);
 
-    const [equityBal] = await this.q(`
+    const [equityBal] = await this.q(
+      `
       SELECT COALESCE(SUM(
         CASE WHEN l.dr_cr = 'CREDIT' THEN CAST(l.amount AS NUMERIC)
              ELSE -CAST(l.amount AS NUMERIC) END
@@ -462,10 +466,12 @@ export class ReportsService {
       JOIN journal_entries je ON je.id = l.journal_entry_id
       JOIN accounts a ON a.id = l.account_id
       WHERE je.status = 'Posted' AND a.code = '3000' ${dateClause}
-    `);
+    `,
+      plParams,
+    );
     const owner_equity = Number(equityBal?.balance ?? 0);
 
-    const partners: Array<{
+    type PartnerRow = {
       bank_account_id: string;
       partner_name: string;
       bank_name: string | null;
@@ -475,10 +481,19 @@ export class ReportsService {
       capital_in: number;
       profit_share: number;
       trailing_equity: number;
-    }> = [];
+    };
+
+    const capitalised: PartnerRow[] = [];
     for (const b of banks) {
-      const receiptDate = as_of ? `AND ft.transaction_date <= '${as_of}'` : '';
-      const [cap] = await this.q(`
+      // Equity receipts still on file (deleted sources/txs are gone from DB)
+      const capParams: unknown[] = [b.id];
+      let receiptDate = '';
+      if (as_of) {
+        capParams.push(as_of);
+        receiptDate = `AND ft.transaction_date <= $${capParams.length}`;
+      }
+      const [cap] = await this.q(
+        `
         SELECT COALESCE(SUM(CAST(ft.amount AS NUMERIC)), 0) AS total
         FROM fund_transactions ft
         JOIN fund_sources fs ON fs.id = ft.fund_source_id
@@ -486,26 +501,54 @@ export class ReportsService {
           AND fs.source_type = 'EQUITY'
           AND fs.status != 'Cancelled'
           ${receiptDate}
-      `, [b.id]);
+      `,
+        capParams,
+      );
 
-      const capital_opening = Number(b.opening_balance || 0);
+      // Opening capital only if BANK-OPEN journal still exists (cleared openings don't count)
+      const [openJe] = await this.q(
+        `
+        SELECT COALESCE(SUM(CAST(l.amount AS NUMERIC)), 0) AS total
+        FROM journal_entries je
+        JOIN journal_entry_lines l ON l.journal_entry_id = je.id AND l.dr_cr = 'DEBIT'
+        WHERE je.reference_no = $1 AND je.status = 'Posted'
+      `,
+        [`BANK-OPEN-${b.id}`],
+      );
+
+      const capital_opening = Number(openJe?.total ?? 0);
       const capital_contributed = Number(cap?.total ?? 0);
       const capital_in = Math.round((capital_opening + capital_contributed) * 100) / 100;
-      const profit_share = Math.round(net_income * (share_pct / 100) * 100) / 100;
-      const trailing_equity = Math.round((capital_in + profit_share) * 100) / 100;
 
-      partners.push({
+      // Hide banks with no remaining equity capital (deleted equity / empty duplicates)
+      if (capital_in <= 0.009) continue;
+
+      capitalised.push({
         bank_account_id: b.id,
         partner_name: b.name,
         bank_name: b.bank_name,
-        share_pct,
+        share_pct: 0,
         capital_opening,
         capital_contributed,
         capital_in,
-        profit_share,
-        trailing_equity,
+        profit_share: 0,
+        trailing_equity: 0,
       });
     }
+
+    const partnerCount = capitalised.length;
+    const share_pct =
+      partnerCount === 2 ? 50 : partnerCount > 0 ? Math.round(10000 / partnerCount) / 100 : 0;
+
+    const partners = capitalised.map((p) => {
+      const profit_share = Math.round(net_income * (share_pct / 100) * 100) / 100;
+      return {
+        ...p,
+        share_pct,
+        profit_share,
+        trailing_equity: Math.round((p.capital_in + profit_share) * 100) / 100,
+      };
+    });
 
     const total_capital = partners.reduce((s, p) => s + p.capital_in, 0);
     const total_trailing = partners.reduce((s, p) => s + p.trailing_equity, 0);

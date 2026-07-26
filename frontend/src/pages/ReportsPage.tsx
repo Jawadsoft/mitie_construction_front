@@ -487,14 +487,14 @@ export default function ReportsPage() {
                   <div>
                     <h2 className="font-bold text-gray-800 text-lg">Trailing Partners Equity</h2>
                     <p className="text-sm text-gray-500 mt-0.5">
-                      Capital in (opening + equity receipts) + shared net profit.
-                      Sharing:{' '}
+                      Only partners with remaining capital (bank opening JE + equity receipts still on file).
+                      Deleted equity sources/receipts are excluded. Sharing:{' '}
                       <span className="font-semibold text-slate-700">
                         {partnersEquity.sharing.mode === '50:50'
                           ? '50:50 (two partners)'
                           : partnersEquity.sharing.mode === 'equal'
                             ? `Equal (${partnersEquity.sharing.share_pct}% each)`
-                            : 'Add partner banks under Funds / Accounting'}
+                            : 'Add equity against two partner banks'}
                       </span>
                     </p>
                   </div>
@@ -538,7 +538,7 @@ export default function ReportsPage() {
                       {partnersEquity.partners.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="text-center text-gray-400 py-10">
-                            No partner banks yet. Add two partner banks (e.g. Jawad, Khalid) under Funds or Accounting → Bank Recon.
+                            No partners with capital. Record equity receipts (or bank openings) for two partner banks — deleted equity no longer appears.
                           </td>
                         </tr>
                       ) : (
