@@ -45,6 +45,20 @@ export class AccountingController {
     return this.svc.purgeOrphanAutoJournals();
   }
 
+  /** Rebuild all voucher journals from source docs; purge orphans; reindex PMTs onto banks. */
+  @Post('journal/rebuild-vouchers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...WRITE_ROLES)
+  rebuildAllVoucherJournals(
+    @Body()
+    body?: { apply?: boolean; default_collection_bank_id?: string | null },
+  ) {
+    return this.svc.rebuildAllVoucherJournals({
+      apply: body?.apply !== false,
+      default_collection_bank_id: body?.default_collection_bank_id ?? null,
+    });
+  }
+
   @Post('journal/:id/post')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(...WRITE_ROLES)

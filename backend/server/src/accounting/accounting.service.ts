@@ -392,6 +392,7 @@ export class AccountingService implements OnModuleInit {
       FROM journal_entries je
       WHERE
         (je.reference_no LIKE 'EXP-%'
+          AND je.reference_no NOT LIKE 'EXPPMT-%'
           AND NOT EXISTS (
             SELECT 1 FROM expenses e
             WHERE e.id::text = SUBSTRING(je.reference_no FROM 5)
@@ -400,11 +401,12 @@ export class AccountingService implements OnModuleInit {
           AND NOT EXISTS (
             SELECT 1 FROM sales s
             WHERE s.id::text = SUBSTRING(je.reference_no FROM 6)
+               AND s.status <> 'Cancelled'
           ))
         OR (je.reference_no LIKE 'PMT-%'
           AND NOT EXISTS (
             SELECT 1 FROM sale_installments si
-            WHERE si.id::text = SUBSTRING(je.reference_no FROM 5)
+            WHERE si.id::text = SPLIT_PART(SUBSTRING(je.reference_no FROM 5), '-', 1)
           ))
         OR (je.reference_no LIKE 'FUND-%'
           AND NOT EXISTS (
@@ -416,6 +418,11 @@ export class AccountingService implements OnModuleInit {
             SELECT 1 FROM expense_payments ep
             WHERE ep.id::text = SUBSTRING(je.reference_no FROM 8)
           ))
+        OR (je.reference_no LIKE 'BANK-OPEN-%'
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_accounts ba
+            WHERE ba.id::text = SUBSTRING(je.reference_no FROM 11)
+          ))
     `);
 
     let deleted = 0;
@@ -424,6 +431,462 @@ export class AccountingService implements OnModuleInit {
       deleted += 1;
     }
     return { deleted, references: orphans.map((o) => o.reference_no) };
+  }
+
+  private toDateOnly(value: string | Date | null | undefined): string {
+    if (value == null || value === '') return new Date().toISOString().slice(0, 10);
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return new Date().toISOString().slice(0, 10);
+      // node-pg returns DATE as JS Date at UTC midnight
+      const y = value.getUTCFullYear();
+      const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(value.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    const s = String(value).trim();
+    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (iso) return iso[1];
+    const parsed = new Date(s);
+    if (!Number.isNaN(parsed.getTime())) return this.toDateOnly(parsed);
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  private matchBankIdFromNarration(
+    narration: string | null | undefined,
+    banks: BankAccount[],
+  ): string | null {
+    if (!narration) return null;
+    const m = String(narration).match(/^Bank:\s*(.+)$/i);
+    const needle = (m ? m[1] : narration).trim().toLowerCase();
+    if (!needle || needle === 'cash received' || needle === 'cash & bank') return null;
+    const hit = banks.find((b) => {
+      const names = [b.bank_name, b.name, `${b.bank_name || ''} — ${b.name || ''}`]
+        .filter(Boolean)
+        .map((x) => String(x).trim().toLowerCase());
+      return names.some((n) => n === needle || needle.includes(n) || n.includes(needle));
+    });
+    return hit?.id ?? null;
+  }
+
+  /**
+   * Resolve which partner bank a collection (PMT) should post to.
+   * Prefers prior JE debit sub-account, then "Bank: …" narration, then project fund bank,
+   * then optional default.
+   */
+  private async resolveCollectionBankId(
+    installmentId: string,
+    projectId: string | null | undefined,
+    banks: BankAccount[],
+    cashAccountId: string,
+    defaultBankId?: string | null,
+  ): Promise<string | null> {
+    const priorLines: Array<{ account_id: string; narration: string | null }> =
+      await this.dataSource.query(
+        `
+        SELECT l.account_id::text AS account_id, l.narration
+        FROM journal_entry_lines l
+        INNER JOIN journal_entries je ON je.id = l.journal_entry_id
+        WHERE (je.reference_no = $1 OR je.reference_no LIKE $2)
+          AND l.dr_cr = 'DEBIT'
+        ORDER BY je.id DESC
+        LIMIT 10
+        `,
+        [`PMT-${installmentId}`, `PMT-${installmentId}-%`],
+      );
+
+    for (const line of priorLines) {
+      if (line.account_id && String(line.account_id) !== String(cashAccountId)) {
+        const byCoa = banks.find((b) => String(b.account_id) === String(line.account_id));
+        if (byCoa) return byCoa.id;
+      }
+      const byNarr = this.matchBankIdFromNarration(line.narration, banks);
+      if (byNarr) return byNarr;
+    }
+
+    if (projectId) {
+      const projectBanks: Array<{ bank_account_id: string }> = await this.dataSource.query(
+        `
+        SELECT DISTINCT fs.bank_account_id::text AS bank_account_id
+        FROM fund_sources fs
+        WHERE fs.project_id = $1 AND fs.bank_account_id IS NOT NULL
+        `,
+        [projectId],
+      );
+      if (projectBanks.length === 1) return projectBanks[0].bank_account_id;
+    }
+
+    if (defaultBankId && banks.some((b) => String(b.id) === String(defaultBankId))) {
+      return String(defaultBankId);
+    }
+
+    // Single partner bank in the system → safe default for legacy cash-on-parent PMTs
+    if (banks.length === 1) return banks[0].id;
+
+    return null;
+  }
+
+  /**
+   * Rebuild all voucher-linked journals from source documents, purge orphans,
+   * sync bank openings / fund dates, and reindex PMT refs to stable PMT-{installmentId}.
+   * Collections (PMT) are posted to the resolved partner bank COA child under 1000.
+   */
+  async rebuildAllVoucherJournals(opts?: {
+    apply?: boolean;
+    /** Fallback bank for collections that have no bank signal */
+    default_collection_bank_id?: string | null;
+  }) {
+    const apply = opts?.apply !== false;
+    const report: {
+      mode: 'apply' | 'dry-run';
+      orphans_purged: number;
+      orphan_refs: string[];
+      bank_openings_synced: number;
+      expenses_rebuilt: number;
+      expense_payments_rebuilt: number;
+      sales_rebuilt: number;
+      payments_rebuilt: number;
+      payments_to_bank: number;
+      payments_left_on_cash: string[];
+      funds_rebuilt: number;
+      parent_cash_lines_moved: number;
+      missing_before: Record<string, number>;
+      unbalanced_after: Array<{ id: string; reference_no: string; debit: string; credit: string }>;
+      errors: string[];
+    } = {
+      mode: apply ? 'apply' : 'dry-run',
+      orphans_purged: 0,
+      orphan_refs: [],
+      bank_openings_synced: 0,
+      expenses_rebuilt: 0,
+      expense_payments_rebuilt: 0,
+      sales_rebuilt: 0,
+      payments_rebuilt: 0,
+      payments_to_bank: 0,
+      payments_left_on_cash: [],
+      funds_rebuilt: 0,
+      parent_cash_lines_moved: 0,
+      missing_before: {},
+      unbalanced_after: [],
+      errors: [],
+    };
+
+    const missing = await this.dataSource.query(`
+      SELECT 'EXP' AS kind, COUNT(*)::int AS cnt FROM expenses e
+        WHERE NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_no = 'EXP-' || e.id::text)
+      UNION ALL
+      SELECT 'SALE', COUNT(*)::int FROM sales s
+        WHERE s.status <> 'Cancelled'
+          AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_no = 'SALE-' || s.id::text)
+      UNION ALL
+      SELECT 'PMT', COUNT(*)::int FROM sale_installments si
+        WHERE CAST(si.paid_amount AS NUMERIC) > 0.009
+          AND NOT EXISTS (
+            SELECT 1 FROM journal_entries je
+            WHERE je.reference_no = 'PMT-' || si.id::text
+               OR je.reference_no LIKE 'PMT-' || si.id::text || '-%'
+          )
+      UNION ALL
+      SELECT 'FUND', COUNT(*)::int FROM fund_transactions ft
+        WHERE NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_no = 'FUND-' || ft.id::text)
+      UNION ALL
+      SELECT 'EXPPMT', COUNT(*)::int FROM expense_payments ep
+        WHERE NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_no = 'EXPPMT-' || ep.id::text)
+      UNION ALL
+      SELECT 'BANK-OPEN', COUNT(*)::int FROM bank_accounts ba
+        WHERE CAST(ba.opening_balance AS NUMERIC) > 0.009
+          AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_no = 'BANK-OPEN-' || ba.id::text)
+    `);
+    for (const row of missing) {
+      report.missing_before[row.kind] = Number(row.cnt);
+    }
+
+    if (!apply) {
+      const orphanPreview = await this.dataSource.query(`
+        SELECT je.reference_no FROM journal_entries je
+        WHERE
+          (je.reference_no LIKE 'EXP-%' AND je.reference_no NOT LIKE 'EXPPMT-%'
+            AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.id::text = SUBSTRING(je.reference_no FROM 5)))
+          OR (je.reference_no LIKE 'SALE-%'
+            AND NOT EXISTS (SELECT 1 FROM sales s WHERE s.id::text = SUBSTRING(je.reference_no FROM 6) AND s.status <> 'Cancelled'))
+          OR (je.reference_no LIKE 'PMT-%'
+            AND NOT EXISTS (SELECT 1 FROM sale_installments si WHERE si.id::text = SPLIT_PART(SUBSTRING(je.reference_no FROM 5), '-', 1)))
+          OR (je.reference_no LIKE 'FUND-%'
+            AND NOT EXISTS (SELECT 1 FROM fund_transactions ft WHERE ft.id::text = SUBSTRING(je.reference_no FROM 6)))
+          OR (je.reference_no LIKE 'EXPPMT-%'
+            AND NOT EXISTS (SELECT 1 FROM expense_payments ep WHERE ep.id::text = SUBSTRING(je.reference_no FROM 8)))
+          OR (je.reference_no LIKE 'BANK-OPEN-%'
+            AND NOT EXISTS (SELECT 1 FROM bank_accounts ba WHERE ba.id::text = SUBSTRING(je.reference_no FROM 11)))
+      `);
+      report.orphan_refs = orphanPreview.map((r: { reference_no: string }) => r.reference_no);
+      report.orphans_purged = report.orphan_refs.length;
+      return report;
+    }
+
+    // 1) Purge unlinked voucher journals
+    const purged = await this.purgeOrphanAutoJournals();
+    report.orphans_purged = purged.deleted;
+    report.orphan_refs = purged.references;
+
+    // 2) Ensure partner banks have COA children; sync openings
+    await this.ensureBankCoaSubAccounts();
+    let banks = await this.bankRepo.find();
+    const cash = await this.findAccountByCode('1000');
+    for (const bank of banks) {
+      try {
+        const fresh = await this.bankRepo.findOne({ where: { id: bank.id } });
+        if (!fresh?.account_id) continue;
+        await this.syncBankOpeningBalance(fresh);
+        report.bank_openings_synced += 1;
+      } catch (err: any) {
+        report.errors.push(`BANK-OPEN-${bank.id}: ${err?.message || err}`);
+      }
+    }
+    banks = await this.bankRepo.find();
+
+    // 3) Expenses
+    const expenses: Expense[] = await this.dataSource.query(`SELECT * FROM expenses ORDER BY id`);
+    for (const expense of expenses) {
+      try {
+        const normalized = {
+          ...expense,
+          expense_date: this.toDateOnly(expense.expense_date as any),
+        };
+        await this.dataSource.transaction(async (manager) => {
+          await this.deleteJournalByReference(`EXP-${expense.id}`, manager);
+          await this.postExpenseJournal(normalized, manager);
+        });
+        report.expenses_rebuilt += 1;
+      } catch (err: any) {
+        report.errors.push(`EXP-${expense.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 4) Expense bill payments
+    const expPayments: Array<{
+      id: string;
+      expense_id: string;
+      paid_date: string;
+      amount: string;
+      payment_method: string;
+      bank_account_id: string | null;
+    }> = await this.dataSource.query(`SELECT * FROM expense_payments ORDER BY id`);
+    for (const payment of expPayments) {
+      try {
+        const expense = expenses.find((e) => String(e.id) === String(payment.expense_id));
+        if (!expense) continue;
+        await this.dataSource.transaction(async (manager) => {
+          await this.deleteJournalByReference(`EXPPMT-${payment.id}`, manager);
+          await this.postExpenseBillPaymentJournal(
+            { ...expense, expense_date: this.toDateOnly(expense.expense_date as any) },
+            { ...payment, paid_date: this.toDateOnly(payment.paid_date as any) },
+            manager,
+          );
+        });
+        report.expense_payments_rebuilt += 1;
+      } catch (err: any) {
+        report.errors.push(`EXPPMT-${payment.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 5) Sales (+ project link)
+    const sales: Array<Sale & { project_id?: string | null }> = await this.dataSource.query(`
+      SELECT s.*, pu.project_id
+      FROM sales s
+      LEFT JOIN property_units pu ON pu.id = s.property_unit_id
+      WHERE s.status <> 'Cancelled'
+      ORDER BY s.id
+    `);
+    for (const sale of sales) {
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await this.deleteJournalByReference(`SALE-${sale.id}`, manager);
+          await this.postSaleJournal(
+            { ...sale, sale_date: this.toDateOnly(sale.sale_date as any) },
+            sale.project_id ?? null,
+            manager,
+          );
+        });
+        report.sales_rebuilt += 1;
+      } catch (err: any) {
+        report.errors.push(`SALE-${sale.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 6) Collection payments — consolidate to stable PMT-{installmentId}
+    const installments: Array<{
+      id: string;
+      sale_id: string;
+      paid_amount: string;
+      paid_date: string | null;
+      project_id: string | null;
+    }> = await this.dataSource.query(`
+      SELECT si.id, si.sale_id, si.paid_amount, si.paid_date, pu.project_id
+      FROM sale_installments si
+      INNER JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN property_units pu ON pu.id = s.property_unit_id
+      WHERE s.status <> 'Cancelled'
+      ORDER BY si.id
+    `);
+
+    for (const inst of installments) {
+      try {
+        const paid = Number(inst.paid_amount || 0);
+        const sale = sales.find((s) => String(s.id) === String(inst.sale_id));
+        if (!sale) {
+          await this.deleteJournalsByReferencePrefix(`PMT-${inst.id}`);
+          continue;
+        }
+
+        const bank_account_id = await this.resolveCollectionBankId(
+          String(inst.id),
+          inst.project_id,
+          banks,
+          cash.id,
+          opts?.default_collection_bank_id,
+        );
+
+        await this.dataSource.transaction(async (manager) => {
+          await this.deleteJournalsByReferencePrefix(`PMT-${inst.id}`, manager);
+          if (!(paid > 0.009)) return;
+          await this.postSalePaymentJournal(
+            { ...sale, sale_date: this.toDateOnly(sale.sale_date as any) },
+            paid.toFixed(2),
+            {
+              installment_id: String(inst.id),
+              paid_date: this.toDateOnly((inst.paid_date || sale.sale_date) as any),
+              project_id: inst.project_id,
+              bank_account_id,
+              reference_no: `PMT-${inst.id}`,
+            },
+            manager,
+          );
+        });
+        if (paid > 0.009) {
+          report.payments_rebuilt += 1;
+          if (bank_account_id) report.payments_to_bank += 1;
+          else report.payments_left_on_cash.push(`PMT-${inst.id}`);
+        }
+      } catch (err: any) {
+        report.errors.push(`PMT-${inst.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 7) Fund receipts
+    const funds: Array<{
+      id: string;
+      fund_source_id: string;
+      transaction_date: string;
+      amount: string;
+      source_name: string;
+      source_type: string;
+      bank_account_id: string | null;
+      project_id: string | null;
+    }> = await this.dataSource.query(`
+      SELECT ft.id, ft.fund_source_id, ft.transaction_date, ft.amount,
+             fs.source_name, fs.source_type, fs.bank_account_id, fs.project_id
+      FROM fund_transactions ft
+      INNER JOIN fund_sources fs ON fs.id = ft.fund_source_id
+      ORDER BY ft.id
+    `);
+    for (const ft of funds) {
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await this.deleteJournalByReference(`FUND-${ft.id}`, manager);
+          await this.postFundReceiptJournal(
+            {
+              fund_transaction_id: String(ft.id),
+              fund_source_id: String(ft.fund_source_id),
+              source_name: ft.source_name,
+              source_type: ft.source_type,
+              bank_account_id: ft.bank_account_id,
+              project_id: ft.project_id,
+              transaction_date: this.toDateOnly(ft.transaction_date as any),
+              amount: ft.amount,
+            },
+            manager,
+          );
+        });
+        report.funds_rebuilt += 1;
+      } catch (err: any) {
+        report.errors.push(`FUND-${ft.id}: ${err?.message || err}`);
+      }
+    }
+
+    // 8) Move remaining mappable parent-1000 lines onto bank sub-accounts
+    banks = await this.bankRepo.find();
+    const parentMoves: Array<{ line_id: string; bank_id: string }> = await this.dataSource.query(
+      `
+      SELECT l.id::text AS line_id, e.bank_account_id::text AS bank_id
+      FROM journal_entry_lines l
+      INNER JOIN journal_entries je ON je.id = l.journal_entry_id
+      INNER JOIN expenses e ON je.reference_no = 'EXP-' || e.id::text
+      WHERE l.account_id = $1 AND e.bank_account_id IS NOT NULL
+      UNION ALL
+      SELECT l.id::text, ep.bank_account_id::text
+      FROM journal_entry_lines l
+      INNER JOIN journal_entries je ON je.id = l.journal_entry_id
+      INNER JOIN expense_payments ep ON je.reference_no = 'EXPPMT-' || ep.id::text
+      WHERE l.account_id = $1 AND ep.bank_account_id IS NOT NULL
+      UNION ALL
+      SELECT l.id::text, fs.bank_account_id::text
+      FROM journal_entry_lines l
+      INNER JOIN journal_entries je ON je.id = l.journal_entry_id
+      INNER JOIN fund_transactions ft ON je.reference_no = 'FUND-' || ft.id::text
+      INNER JOIN fund_sources fs ON fs.id = ft.fund_source_id
+      WHERE l.account_id = $1 AND fs.bank_account_id IS NOT NULL
+      `,
+      [cash.id],
+    );
+    for (const mv of parentMoves) {
+      const bank = banks.find((b) => String(b.id) === String(mv.bank_id));
+      if (!bank?.account_id || String(bank.account_id) === String(cash.id)) continue;
+      await this.dataSource.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [
+        bank.account_id,
+        mv.line_id,
+      ]);
+      report.parent_cash_lines_moved += 1;
+    }
+
+    // 8b) Any PMT still on parent 1000 with Bank: narration → move to that sub-account
+    const pmtOnParent: Array<{ line_id: string; narration: string | null }> =
+      await this.dataSource.query(
+        `
+        SELECT l.id::text AS line_id, l.narration
+        FROM journal_entry_lines l
+        INNER JOIN journal_entries je ON je.id = l.journal_entry_id
+        WHERE l.account_id = $1
+          AND l.dr_cr = 'DEBIT'
+          AND je.reference_no LIKE 'PMT-%'
+        `,
+        [cash.id],
+      );
+    for (const row of pmtOnParent) {
+      const bankId = this.matchBankIdFromNarration(row.narration, banks);
+      const bank = bankId ? banks.find((b) => String(b.id) === String(bankId)) : null;
+      if (!bank?.account_id || String(bank.account_id) === String(cash.id)) continue;
+      await this.dataSource.query(`UPDATE journal_entry_lines SET account_id = $1 WHERE id = $2`, [
+        bank.account_id,
+        row.line_id,
+      ]);
+      report.parent_cash_lines_moved += 1;
+    }
+
+    // 9) Unbalanced posted journals
+    report.unbalanced_after = await this.dataSource.query(`
+      SELECT je.id::text AS id, je.reference_no,
+             COALESCE(SUM(CASE WHEN l.dr_cr = 'DEBIT' THEN l.amount ELSE 0 END), 0)::text AS debit,
+             COALESCE(SUM(CASE WHEN l.dr_cr = 'CREDIT' THEN l.amount ELSE 0 END), 0)::text AS credit
+      FROM journal_entries je
+      LEFT JOIN journal_entry_lines l ON l.journal_entry_id = je.id
+      WHERE je.status = 'Posted'
+      GROUP BY je.id, je.reference_no
+      HAVING ABS(
+        COALESCE(SUM(CASE WHEN l.dr_cr = 'DEBIT' THEN l.amount ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN l.dr_cr = 'CREDIT' THEN l.amount ELSE 0 END), 0)
+      ) > 0.009
+    `);
+
+    return report;
   }
 
   async createAndPostEntry(
@@ -537,6 +1000,8 @@ export class AccountingService implements OnModuleInit {
       paid_date: string;
       project_id?: string | null;
       bank_account_id?: string | null;
+      /** Stable voucher ref; default PMT-{installment}-{unique} */
+      reference_no?: string;
     },
     manager?: EntityManager,
   ) {
@@ -556,11 +1021,15 @@ export class AccountingService implements OnModuleInit {
       }
     }
 
+    const reference_no =
+      meta.reference_no ||
+      `PMT-${meta.installment_id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
     return this.createAndPostEntry(
       {
         entry: {
           entry_date: meta.paid_date,
-          reference_no: `PMT-${meta.installment_id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          reference_no,
           description: `Sale payment for sale ${sale.id}`,
           project_id: meta.project_id || null,
         },
