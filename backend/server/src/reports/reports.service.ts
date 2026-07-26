@@ -416,6 +416,115 @@ export class ReportsService {
     });
   }
 
+  /**
+   * Trailing partners equity — capital in per partner bank + shared P&L.
+   * Default partnership: 50:50 when there are two active partner banks.
+   */
+  async getPartnersEquity(as_of?: string) {
+    const banks: Array<{
+      id: string;
+      name: string;
+      bank_name: string | null;
+      opening_balance: string;
+    }> = await this.q(`
+      SELECT id::text AS id, name, bank_name, opening_balance::text
+      FROM bank_accounts
+      WHERE is_active = true
+      ORDER BY name ASC, id ASC
+    `);
+
+    const partnerCount = banks.length;
+    const share_pct = partnerCount === 2 ? 50 : partnerCount > 0 ? Math.round((10000 / partnerCount)) / 100 : 0;
+
+    // Net income from posted journals (same plug as balance sheet)
+    const dateClause = as_of ? `AND je.entry_date <= '${as_of}'` : '';
+    const [pl] = await this.q(`
+      SELECT
+        COALESCE(SUM(CASE WHEN a.type = 'INCOME' AND l.dr_cr = 'CREDIT' THEN CAST(l.amount AS NUMERIC)
+                          WHEN a.type = 'INCOME' AND l.dr_cr = 'DEBIT' THEN -CAST(l.amount AS NUMERIC)
+                          ELSE 0 END), 0) AS income,
+        COALESCE(SUM(CASE WHEN a.type = 'EXPENSE' AND l.dr_cr = 'DEBIT' THEN CAST(l.amount AS NUMERIC)
+                          WHEN a.type = 'EXPENSE' AND l.dr_cr = 'CREDIT' THEN -CAST(l.amount AS NUMERIC)
+                          ELSE 0 END), 0) AS expense
+      FROM journal_entry_lines l
+      JOIN journal_entries je ON je.id = l.journal_entry_id
+      JOIN accounts a ON a.id = l.account_id
+      WHERE je.status = 'Posted' ${dateClause}
+    `);
+    const net_income = Number(pl?.income ?? 0) - Number(pl?.expense ?? 0);
+
+    const [equityBal] = await this.q(`
+      SELECT COALESCE(SUM(
+        CASE WHEN l.dr_cr = 'CREDIT' THEN CAST(l.amount AS NUMERIC)
+             ELSE -CAST(l.amount AS NUMERIC) END
+      ), 0) AS balance
+      FROM journal_entry_lines l
+      JOIN journal_entries je ON je.id = l.journal_entry_id
+      JOIN accounts a ON a.id = l.account_id
+      WHERE je.status = 'Posted' AND a.code = '3000' ${dateClause}
+    `);
+    const owner_equity = Number(equityBal?.balance ?? 0);
+
+    const partners: Array<{
+      bank_account_id: string;
+      partner_name: string;
+      bank_name: string | null;
+      share_pct: number;
+      capital_opening: number;
+      capital_contributed: number;
+      capital_in: number;
+      profit_share: number;
+      trailing_equity: number;
+    }> = [];
+    for (const b of banks) {
+      const receiptDate = as_of ? `AND ft.transaction_date <= '${as_of}'` : '';
+      const [cap] = await this.q(`
+        SELECT COALESCE(SUM(CAST(ft.amount AS NUMERIC)), 0) AS total
+        FROM fund_transactions ft
+        JOIN fund_sources fs ON fs.id = ft.fund_source_id
+        WHERE fs.bank_account_id = $1
+          AND fs.source_type = 'EQUITY'
+          AND fs.status != 'Cancelled'
+          ${receiptDate}
+      `, [b.id]);
+
+      const capital_opening = Number(b.opening_balance || 0);
+      const capital_contributed = Number(cap?.total ?? 0);
+      const capital_in = Math.round((capital_opening + capital_contributed) * 100) / 100;
+      const profit_share = Math.round(net_income * (share_pct / 100) * 100) / 100;
+      const trailing_equity = Math.round((capital_in + profit_share) * 100) / 100;
+
+      partners.push({
+        bank_account_id: b.id,
+        partner_name: b.name,
+        bank_name: b.bank_name,
+        share_pct,
+        capital_opening,
+        capital_contributed,
+        capital_in,
+        profit_share,
+        trailing_equity,
+      });
+    }
+
+    const total_capital = partners.reduce((s, p) => s + p.capital_in, 0);
+    const total_trailing = partners.reduce((s, p) => s + p.trailing_equity, 0);
+
+    return {
+      as_of: as_of ?? null,
+      sharing: {
+        mode: partnerCount === 2 ? '50:50' : partnerCount > 0 ? 'equal' : 'none',
+        share_pct,
+        partner_count: partnerCount,
+      },
+      owner_equity,
+      net_income: Math.round(net_income * 100) / 100,
+      total_capital: Math.round(total_capital * 100) / 100,
+      total_trailing_equity: Math.round(total_trailing * 100) / 100,
+      partners,
+    };
+  }
+
   // ─── Expense Breakdown ────────────────────────────────────────────────────
   async getExpenseBreakdown(project_id?: string) {
     const whereProj = project_id ? `WHERE e.project_id = $1` : '';

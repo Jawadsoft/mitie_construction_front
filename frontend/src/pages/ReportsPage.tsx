@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import {
   getBudgetVsActual, getStageBudget, getProfitability, getProfitLoss,
-  getSupplierPayables, getReceivables, getLabourCost, getCashflowReport, getExpenseBreakdown
+  getSupplierPayables, getReceivables, getLabourCost, getCashflowReport, getExpenseBreakdown,
+  getPartnersEquity,
 } from '../api/reports';
 import { exportCSV, exportPDF } from '../utils/exportUtils';
 import type {
   BudgetVsActual, StageBudget, ProjectProfitability, ProfitLoss,
-  SupplierPayable, ReceivableRow, LabourCost, CashflowRow, ExpenseBreakdown
+  SupplierPayable, ReceivableRow, LabourCost, CashflowRow, ExpenseBreakdown,
+  PartnersEquityReport,
 } from '../api/reports';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 
-type ReportTab = 'profitability' | 'budget' | 'pl' | 'cashflow' | 'payables' | 'receivables' | 'labour' | 'expenses';
+type ReportTab = 'profitability' | 'budget' | 'pl' | 'partners-equity' | 'cashflow' | 'payables' | 'receivables' | 'labour' | 'expenses';
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -51,6 +53,7 @@ export default function ReportsPage() {
   const [receivablesData, setReceivablesData] = useState<ReceivableRow[]>([]);
   const [labourData, setLabourData] = useState<LabourCost | null>(null);
   const [expenseData, setExpenseData] = useState<ExpenseBreakdown | null>(null);
+  const [partnersEquity, setPartnersEquity] = useState<PartnersEquityReport | null>(null);
 
   useEffect(() => { getProjects().then(setProjects).catch(() => {}); }, []);
 
@@ -65,6 +68,7 @@ export default function ReportsPage() {
           else setStageData([]);
           break;
         case 'pl': setPlData(await getProfitLoss(dateFrom || undefined, dateTo || undefined)); break;
+        case 'partners-equity': setPartnersEquity(await getPartnersEquity(dateTo || undefined)); break;
         case 'cashflow': setCashflowData(await getCashflowReport(period, dateFrom || undefined, dateTo || undefined)); break;
         case 'payables': setPayablesData(await getSupplierPayables()); break;
         case 'receivables': setReceivablesData(await getReceivables()); break;
@@ -81,6 +85,7 @@ export default function ReportsPage() {
     { id: 'profitability', label: '📈 Profitability' },
     { id: 'budget', label: '📊 Budget vs Actual' },
     { id: 'pl', label: '💹 P&L Statement' },
+    { id: 'partners-equity', label: '🤝 Partners Equity' },
     { id: 'cashflow', label: '💰 Cash Flow' },
     { id: 'payables', label: '🏢 Payables' },
     { id: 'receivables', label: '⏳ Receivables' },
@@ -116,6 +121,21 @@ export default function ReportsPage() {
                 })) as any,
               );
             }
+            else if (tab === 'partners-equity' && partnersEquity?.partners?.length) {
+              exportCSV(
+                `report-partners-equity`,
+                partnersEquity.partners.map((p) => ({
+                  Partner: p.partner_name,
+                  Bank: p.bank_name || '',
+                  SharePct: p.share_pct,
+                  Opening: p.capital_opening,
+                  EquityReceipts: p.capital_contributed,
+                  CapitalIn: p.capital_in,
+                  ProfitShare: p.profit_share,
+                  TrailingEquity: p.trailing_equity,
+                })) as any,
+              );
+            }
             else if (tab === 'receivables' && receivablesData.length) exportCSV(`report-receivables`, receivablesData as any);
             else if (tab === 'payables' && payablesData.length) exportCSV(`report-payables`, payablesData as any);
           }} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
@@ -135,6 +155,19 @@ export default function ReportsPage() {
                   u.allocated_cost.toLocaleString(),
                   u.profit.toLocaleString(),
                   `${u.margin_pct}%`,
+                ]),
+              );
+            }
+            else if (tab === 'partners-equity' && partnersEquity?.partners) {
+              exportPDF(
+                'Partners Equity (50:50)',
+                ['Partner', 'Share%', 'Capital In', 'Profit Share', 'Trailing Equity'],
+                partnersEquity.partners.map((p) => [
+                  p.partner_name,
+                  `${p.share_pct}%`,
+                  p.capital_in.toLocaleString(),
+                  p.profit_share.toLocaleString(),
+                  p.trailing_equity.toLocaleString(),
                 ]),
               );
             }
@@ -170,6 +203,17 @@ export default function ReportsPage() {
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} placeholder="To"
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
           </>
+        )}
+        {tab === 'partners-equity' && (
+          <label className="text-xs text-slate-500 flex flex-col gap-1">
+            As of
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </label>
         )}
         {tab === 'cashflow' && (
           <select value={period} onChange={e => setPeriod(e.target.value as any)}
@@ -426,6 +470,115 @@ export default function ReportsPage() {
                             {plData.sold_units_summary.profit >= 0 ? '+' : ''}{fmt(plData.sold_units_summary.profit)}
                           </td>
                           <td className="px-3 py-2.5 text-right font-semibold">{plData.sold_units_summary.margin_pct}%</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Partners Equity (50:50) ─── */}
+          {tab === 'partners-equity' && partnersEquity && (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border p-5">
+                <div className="flex flex-wrap justify-between gap-2 items-start mb-4">
+                  <div>
+                    <h2 className="font-bold text-gray-800 text-lg">Trailing Partners Equity</h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Capital in (opening + equity receipts) + shared net profit.
+                      Sharing:{' '}
+                      <span className="font-semibold text-slate-700">
+                        {partnersEquity.sharing.mode === '50:50'
+                          ? '50:50 (two partners)'
+                          : partnersEquity.sharing.mode === 'equal'
+                            ? `Equal (${partnersEquity.sharing.share_pct}% each)`
+                            : 'Add partner banks under Funds / Accounting'}
+                      </span>
+                    </p>
+                  </div>
+                  <span className="text-sm text-gray-500">
+                    As of: {partnersEquity.as_of || 'All time'}
+                  </span>
+                </div>
+                <div className="grid sm:grid-cols-3 gap-3 mb-4">
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-500">Owner Equity (3000)</p>
+                    <p className="font-bold text-slate-800">{fmtFull(partnersEquity.owner_equity)}</p>
+                  </div>
+                  <div className={`rounded-lg p-3 ${partnersEquity.net_income >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                    <p className="text-xs text-slate-500">Net Profit / Loss</p>
+                    <p className={`font-bold ${partnersEquity.net_income >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {partnersEquity.net_income >= 0 ? '+' : ''}{fmtFull(partnersEquity.net_income)}
+                    </p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-blue-600">Total Trailing Equity</p>
+                    <p className="font-bold text-blue-800">{fmtFull(partnersEquity.total_trailing_equity)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-gray-600">Partner</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Share</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Opening</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Equity Receipts</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Capital In</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Profit Share</th>
+                        <th className="px-4 py-3 text-right text-gray-600">Trailing Equity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {partnersEquity.partners.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="text-center text-gray-400 py-10">
+                            No partner banks yet. Add two partner banks (e.g. Jawad, Khalid) under Funds or Accounting → Bank Recon.
+                          </td>
+                        </tr>
+                      ) : (
+                        partnersEquity.partners.map((p) => (
+                          <tr key={p.bank_account_id} className="border-t hover:bg-gray-50">
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-gray-800">{p.partner_name}</p>
+                              {p.bank_name && <p className="text-xs text-gray-400">{p.bank_name}</p>}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono">{p.share_pct}%</td>
+                            <td className="px-4 py-3 text-right font-mono">{fmt(p.capital_opening)}</td>
+                            <td className="px-4 py-3 text-right font-mono">{fmt(p.capital_contributed)}</td>
+                            <td className="px-4 py-3 text-right font-mono font-medium">{fmt(p.capital_in)}</td>
+                            <td className={`px-4 py-3 text-right font-mono ${p.profit_share >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                              {p.profit_share >= 0 ? '+' : ''}{fmt(p.profit_share)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold text-blue-800">
+                              {fmt(p.trailing_equity)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {partnersEquity.partners.length > 0 && (
+                      <tfoot className="bg-slate-50 border-t-2">
+                        <tr>
+                          <td className="px-4 py-3 font-semibold" colSpan={2}>Totals</td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">
+                            {fmt(partnersEquity.partners.reduce((s, p) => s + p.capital_opening, 0))}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">
+                            {fmt(partnersEquity.partners.reduce((s, p) => s + p.capital_contributed, 0))}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">{fmt(partnersEquity.total_capital)}</td>
+                          <td className={`px-4 py-3 text-right font-mono font-semibold ${partnersEquity.net_income >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {partnersEquity.net_income >= 0 ? '+' : ''}{fmt(partnersEquity.net_income)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-blue-800">
+                            {fmt(partnersEquity.total_trailing_equity)}
+                          </td>
                         </tr>
                       </tfoot>
                     )}

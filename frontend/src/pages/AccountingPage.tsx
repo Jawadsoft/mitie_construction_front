@@ -38,6 +38,8 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { formatDate } from '../utils/date';
 import { exportCSV, exportExcel } from '../utils/exportUtils';
+import { getPartnersEquity } from '../api/reports';
+import type { PartnersEquityReport } from '../api/reports';
 
 type Tab = 'journal' | 'accounts' | 'trial-balance' | 'general-ledger' | 'balance-sheet' | 'bank-recon';
 
@@ -62,6 +64,8 @@ export default function AccountingPage() {
   const [glTo, setGlTo] = useState('');
   const [glIncludeChildren, setGlIncludeChildren] = useState(true);
   const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport | null>(null);
+  const [showPartnersEquity, setShowPartnersEquity] = useState(false);
+  const [partnersEquity, setPartnersEquity] = useState<PartnersEquityReport | null>(null);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState('');
   const [statements, setStatements] = useState<BankStatementLine[]>([]);
@@ -135,13 +139,18 @@ export default function AccountingPage() {
         .then(setGlReport)
         .catch((e) => setError(e.message));
     }
-    if (tab === 'balance-sheet') getBalanceSheet().then(setBalanceSheet).catch((e) => setError(e.message));
+    if (tab === 'balance-sheet') {
+      getBalanceSheet().then(setBalanceSheet).catch((e) => setError(e.message));
+      if (showPartnersEquity) {
+        getPartnersEquity().then(setPartnersEquity).catch((e) => setError(e.message));
+      }
+    }
     if (tab === 'bank-recon' && selectedBankId) {
       Promise.all([getStatementLines(selectedBankId), getReconciliations(selectedBankId)])
         .then(([s, r]) => { setStatements(s); setRecons(r); })
         .catch((e) => setError(e.message));
     }
-  }, [tab, glAccountId, glFrom, glTo, glIncludeChildren, selectedBankId]);
+  }, [tab, glAccountId, glFrom, glTo, glIncludeChildren, selectedBankId, showPartnersEquity]);
 
   const viewEntry = async (id: string) => {
     try {
@@ -949,27 +958,87 @@ export default function AccountingPage() {
           );
         })()
       ) : tab === 'balance-sheet' && balanceSheet ? (
-        <div className="grid md:grid-cols-3 gap-4">
-          {[
-            { title: 'Assets', rows: balanceSheet.assets, total: balanceSheet.total_assets },
-            { title: 'Liabilities', rows: balanceSheet.liabilities, total: balanceSheet.total_liabilities },
-            { title: 'Equity', rows: [...balanceSheet.equity, { code: 'NI', name: 'Net Income (plug)', balance: balanceSheet.net_income }], total: balanceSheet.total_equity },
-          ].map((col) => (
-            <div key={col.title} className="bg-white rounded-xl border p-4">
-              <h3 className="font-bold text-gray-800 mb-3">{col.title}</h3>
-              <ul className="space-y-1 text-sm">
-                {col.rows.map((r) => (
-                  <li key={r.code} className="flex justify-between"><span>{r.code} {r.name}</span><span className="font-mono">{Number(r.balance).toLocaleString()}</span></li>
-                ))}
-              </ul>
-              <div className="border-t mt-3 pt-2 flex justify-between font-semibold text-sm">
-                <span>Total</span><span className="font-mono">{Number(col.total).toLocaleString()}</span>
+        <div className="space-y-4">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-600 bg-white border rounded-lg px-3 py-2">
+            <input
+              type="checkbox"
+              checked={showPartnersEquity}
+              onChange={(e) => setShowPartnersEquity(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Show trailing partners equity (50:50)
+          </label>
+          <div className="grid md:grid-cols-3 gap-4">
+            {[
+              { title: 'Assets', rows: balanceSheet.assets, total: balanceSheet.total_assets },
+              { title: 'Liabilities', rows: balanceSheet.liabilities, total: balanceSheet.total_liabilities },
+              { title: 'Equity', rows: [...balanceSheet.equity, { code: 'NI', name: 'Net Income (plug)', balance: balanceSheet.net_income }], total: balanceSheet.total_equity },
+            ].map((col) => (
+              <div key={col.title} className="bg-white rounded-xl border p-4">
+                <h3 className="font-bold text-gray-800 mb-3">{col.title}</h3>
+                <ul className="space-y-1 text-sm">
+                  {col.rows.map((r) => (
+                    <li key={r.code} className="flex justify-between"><span>{r.code} {r.name}</span><span className="font-mono">{Number(r.balance).toLocaleString()}</span></li>
+                  ))}
+                </ul>
+                <div className="border-t mt-3 pt-2 flex justify-between font-semibold text-sm">
+                  <span>Total</span><span className="font-mono">{Number(col.total).toLocaleString()}</span>
+                </div>
               </div>
+            ))}
+            <p className={`md:col-span-3 text-sm ${balanceSheet.balanced ? 'text-green-700' : 'text-amber-700'}`}>
+              {balanceSheet.balanced ? 'Balance sheet balances (Assets = Liabilities + Equity).' : 'Assets do not equal Liabilities + Equity — post more entries or check signs.'}
+            </p>
+          </div>
+          {showPartnersEquity && partnersEquity && (
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <div className="px-4 py-3 border-b bg-slate-50 flex flex-wrap justify-between gap-2">
+                <div>
+                  <h3 className="font-bold text-gray-800">Trailing Partners Equity</h3>
+                  <p className="text-xs text-gray-500">
+                    {partnersEquity.sharing.mode === '50:50'
+                      ? 'Both partners share net profit 50:50'
+                      : `Equal share ${partnersEquity.sharing.share_pct}% each`}
+                    {' · '}Capital = bank opening + equity fund receipts
+                  </p>
+                </div>
+                <p className="text-sm font-semibold text-blue-800">
+                  Total {Number(partnersEquity.total_trailing_equity).toLocaleString()}
+                </p>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left text-gray-600">Partner</th>
+                    <th className="px-4 py-2.5 text-right text-gray-600">Share</th>
+                    <th className="px-4 py-2.5 text-right text-gray-600">Capital In</th>
+                    <th className="px-4 py-2.5 text-right text-gray-600">Profit Share</th>
+                    <th className="px-4 py-2.5 text-right text-gray-600">Trailing Equity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partnersEquity.partners.length === 0 ? (
+                    <tr><td colSpan={5} className="text-center text-gray-400 py-8">Add two partner banks to see 50:50 equity.</td></tr>
+                  ) : partnersEquity.partners.map((p) => (
+                    <tr key={p.bank_account_id} className="border-t">
+                      <td className="px-4 py-2.5 font-medium">
+                        {p.partner_name}
+                        {p.bank_name ? <span className="text-xs text-gray-400 ml-1">{p.bank_name}</span> : null}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono">{p.share_pct}%</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{p.capital_in.toLocaleString()}</td>
+                      <td className={`px-4 py-2.5 text-right font-mono ${p.profit_share >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                        {p.profit_share.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-800">
+                        {p.trailing_equity.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
-          <p className={`md:col-span-3 text-sm ${balanceSheet.balanced ? 'text-green-700' : 'text-amber-700'}`}>
-            {balanceSheet.balanced ? 'Balance sheet balances (Assets = Liabilities + Equity).' : 'Assets do not equal Liabilities + Equity — post more entries or check signs.'}
-          </p>
+          )}
         </div>
       ) : tab === 'bank-recon' ? (
         <div className="space-y-4">

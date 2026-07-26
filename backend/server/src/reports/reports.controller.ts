@@ -25,6 +25,11 @@ export class ReportsController {
     return this.svc.getProfitLoss(from, to);
   }
 
+  @Get('partners-equity')
+  getPartnersEquity(@Query('as_of') as_of?: string) {
+    return this.svc.getPartnersEquity(as_of);
+  }
+
   @Get('supplier-payables')
   getSupplierPayables() {
     return this.svc.getSupplierPayables();

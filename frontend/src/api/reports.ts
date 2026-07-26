@@ -81,6 +81,26 @@ export interface ExpenseBreakdown {
   grand_total: number;
 }
 
+export interface PartnersEquityReport {
+  as_of: string | null;
+  sharing: { mode: '50:50' | 'equal' | 'none'; share_pct: number; partner_count: number };
+  owner_equity: number;
+  net_income: number;
+  total_capital: number;
+  total_trailing_equity: number;
+  partners: {
+    bank_account_id: string;
+    partner_name: string;
+    bank_name: string | null;
+    share_pct: number;
+    capital_opening: number;
+    capital_contributed: number;
+    capital_in: number;
+    profit_share: number;
+    trailing_equity: number;
+  }[];
+}
+
 const get = async <T>(url: string): Promise<T> => {
   const res = await fetch(url, h());
   if (!res.ok) throw new Error('Report fetch failed');
@@ -118,3 +138,6 @@ export const getCashflowReport = (period = 'monthly', from?: string, to?: string
 
 export const getExpenseBreakdown = (project_id?: string) =>
   get<ExpenseBreakdown>(`${BASE}/expenses${project_id ? `?project_id=${project_id}` : ''}`);
+
+export const getPartnersEquity = (as_of?: string) =>
+  get<PartnersEquityReport>(`${BASE}/partners-equity${as_of ? `?as_of=${as_of}` : ''}`);
