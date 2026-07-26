@@ -21,6 +21,7 @@ import PakistanBankNameInput from '../components/PakistanBankNameInput';
 import PakistanLocationInput from '../components/PakistanLocationInput';
 import StatCard from '../components/StatCard';
 import { amountToWordsPk, formatMoneyDisplay, parseMoneyInput } from '../utils/money';
+import { formatDate, toDateOnly } from '../utils/date';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 
@@ -162,7 +163,7 @@ export default function FundsPage() {
       source_name: s.source_name,
       source_type: s.source_type,
       total_committed: parseMoneyInput(String(Math.floor(Number(s.total_committed)) || '')),
-      expected_date: s.expected_date ?? '',
+      expected_date: toDateOnly(s.expected_date) || '',
       notes: s.notes ?? '',
     });
     setError('');
@@ -180,7 +181,7 @@ export default function FundsPage() {
     setEditingTx(t);
     setTxForm({
       fund_source_id: t.fund_source_id,
-      transaction_date: t.transaction_date,
+      transaction_date: toDateOnly(t.transaction_date) || new Date().toISOString().split('T')[0],
       amount: t.amount,
       reference_no: t.reference_no ?? '',
       notes: t.notes ?? '',
@@ -206,7 +207,7 @@ export default function FundsPage() {
       source_name: sourceForm.source_name,
       source_type: sourceForm.source_type,
       total_committed: sourceForm.total_committed,
-      expected_date: sourceForm.expected_date || null,
+      expected_date: toDateOnly(sourceForm.expected_date) || null,
       notes: sourceForm.notes || null,
     };
     try {
@@ -265,12 +266,19 @@ export default function FundsPage() {
       setError('Fund source and amount are required');
       return;
     }
+    const transaction_date = toDateOnly(txForm.transaction_date);
+    if (!transaction_date) {
+      setError('Date is required');
+      return;
+    }
     setError('');
+    const payload = { ...txForm, transaction_date };
     try {
-      if (editingTx) await updateFundTransaction(editingTx.id, txForm);
-      else await createFundTransaction(txForm);
+      if (editingTx) await updateFundTransaction(editingTx.id, payload);
+      else await createFundTransaction(payload);
       setShowTxModal(false);
       load();
+      notify.success(editingTx ? 'Receipt updated' : 'Receipt recorded');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save receipt');
     }
@@ -482,7 +490,7 @@ export default function FundsPage() {
               ) : transactions.map((t) => (
                 <tr key={t.id} className="border-t hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium">{t.fund_source?.source_name ?? t.fund_source_id}</td>
-                  <td className="px-4 py-3">{t.transaction_date}</td>
+                  <td className="px-4 py-3">{formatDate(t.transaction_date)}</td>
                   <td className="px-4 py-3 text-right font-mono text-green-600 font-medium">{Number(t.amount).toLocaleString()}</td>
                   <td className="px-4 py-3 text-gray-400">{t.reference_no ?? '-'}</td>
                   <td className="px-4 py-3 text-center">
@@ -578,6 +586,15 @@ export default function FundsPage() {
               {Number(sourceForm.total_committed) > 0 && Number(sourceForm.total_committed) < 1000 && (
                 <p className="text-xs text-amber-600 mt-1">Minimum commitment is PKR 1,000</p>
               )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Expected date</label>
+              <input
+                type="date"
+                value={sourceForm.expected_date}
+                onChange={(e) => setSourceForm((f) => ({ ...f, expected_date: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>

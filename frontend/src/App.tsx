@@ -108,6 +108,18 @@ function App() {
     return () => window.removeEventListener('navigate', handler as EventListener)
   }, [])
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      setIsAuthenticated(false)
+      setPage('login')
+      setError('Session expired. Please log in again.')
+    }
+    window.addEventListener('auth:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized)
+  }, [])
+
   const handleNav = (target: Page) => {
     setPage(target)
     setDrawerOpen(false)

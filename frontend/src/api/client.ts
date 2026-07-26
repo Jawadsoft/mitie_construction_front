@@ -32,10 +32,28 @@ export async function login(email: string, password: string) {
   return data;
 }
 
-export function getAuthHeaders(): HeadersInit {
+export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('token');
-  return {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
   };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/** Parse API error; on 401 ask user to re-login (write routes require a valid JWT). */
+export async function readApiError(res: Response, fallback: string): Promise<string> {
+  const data = await res.json().catch(() => ({} as { message?: string | string[] }));
+  const raw = data?.message;
+  const msg = Array.isArray(raw) ? raw.join(', ') : raw || fallback;
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    return 'Session expired or not logged in. Please log out and log in again, then retry.';
+  }
+  if (res.status === 403) {
+    return msg || 'You do not have permission for this action.';
+  }
+  return msg || fallback;
 }

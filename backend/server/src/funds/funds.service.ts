@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { EntityManager, Repository, DataSource } from 'typeorm';
@@ -7,13 +7,23 @@ import { FundTransaction } from './entities/fund-transaction.entity';
 import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
-export class FundsService {
+export class FundsService implements OnModuleInit {
+  private readonly logger = new Logger(FundsService.name);
+
   constructor(
     @InjectRepository(FundSource) private readonly sourcesRepo: Repository<FundSource>,
     @InjectRepository(FundTransaction) private readonly txRepo: Repository<FundTransaction>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly accounting: AccountingService,
   ) {}
+
+  async onModuleInit() {
+    try {
+      await this.syncFundJournalDates();
+    } catch (err) {
+      this.logger.warn(`syncFundJournalDates on boot failed: ${err}`);
+    }
+  }
 
   /** Derive status from committed vs received. Cancelled is sticky until cleared. */
   computeStatus(committed: number | string, received: number | string, current?: string | null): string {
@@ -98,6 +108,12 @@ export class FundsService {
       ...dto,
       project_id: dto.project_id !== undefined ? dto.project_id || null : undefined,
       bank_account_id: dto.bank_account_id !== undefined ? dto.bank_account_id || null : undefined,
+      expected_date:
+        dto.expected_date !== undefined
+          ? dto.expected_date
+            ? this.toDateOnly(dto.expected_date) || null
+            : null
+          : undefined,
     };
 
     if (dto.status === 'Cancelled') {
@@ -118,7 +134,22 @@ export class FundsService {
     return updated;
   }
 
-  findTransactions(fund_source_id?: string) {
+  /**
+   * Align FUND-* journal entry_date with fund_transactions.transaction_date
+   * (fixes older edits that updated the receipt but not the GL).
+   */
+  async syncFundJournalDates() {
+    await this.dataSource.query(`
+      UPDATE journal_entries je
+      SET entry_date = ft.transaction_date
+      FROM fund_transactions ft
+      WHERE je.reference_no = ('FUND-' || ft.id::text)
+        AND je.entry_date IS DISTINCT FROM ft.transaction_date
+    `);
+  }
+
+  async findTransactions(fund_source_id?: string) {
+    await this.syncFundJournalDates();
     const q = this.txRepo
       .createQueryBuilder('ft')
       .leftJoinAndSelect('ft.fund_source', 'fund_source')
@@ -131,6 +162,10 @@ export class FundsService {
     if (!dto.fund_source_id || !dto.amount || !dto.transaction_date) {
       throw new BadRequestException('fund_source_id, amount, and transaction_date are required');
     }
+    const transaction_date = this.toDateOnly(dto.transaction_date);
+    if (!transaction_date) {
+      throw new BadRequestException('transaction_date is invalid');
+    }
     return this.dataSource.transaction(async (manager) => {
       const sourceRepo = manager.getRepository(FundSource);
       const txRepo = manager.getRepository(FundTransaction);
@@ -140,7 +175,9 @@ export class FundsService {
         throw new BadRequestException('Cannot receive funds against a Cancelled commitment');
       }
 
-      const tx = await txRepo.save(txRepo.create(dto));
+      const tx = await txRepo.save(
+        txRepo.create({ ...dto, transaction_date }),
+      );
       await manager.query(
         `UPDATE fund_sources SET received_so_far = received_so_far + $1 WHERE id = $2`,
         [dto.amount, dto.fund_source_id],
@@ -154,7 +191,7 @@ export class FundsService {
           source_type: source.source_type,
           bank_account_id: source.bank_account_id,
           project_id: source.project_id,
-          transaction_date: dto.transaction_date!,
+          transaction_date,
           amount: dto.amount!,
         },
         manager,
@@ -170,20 +207,91 @@ export class FundsService {
     return { deleted: true };
   }
 
+  private toDateOnly(value: string | Date | null | undefined): string | undefined {
+    if (value == null || value === '') return undefined;
+    const s = String(value).trim();
+    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : s.slice(0, 10);
+  }
+
   async updateTransaction(id: string, dto: Partial<FundTransaction>) {
-    const old = await this.txRepo.findOne({ where: { id } });
-    await this.txRepo.update(id, dto);
-    if (old && dto.amount !== undefined) {
-      const diff = Number(dto.amount) - Number(old.amount);
-      if (diff !== 0) {
-        await this.dataSource.query(
-          `UPDATE fund_sources SET received_so_far = received_so_far + $1 WHERE id = $2`,
-          [diff, old.fund_source_id],
-        );
+    return this.dataSource.transaction(async (manager) => {
+      const txRepo = manager.getRepository(FundTransaction);
+      const sourceRepo = manager.getRepository(FundSource);
+      const old = await txRepo.findOne({ where: { id } });
+      if (!old) throw new NotFoundException('Fund transaction not found');
+
+      const transaction_date =
+        dto.transaction_date !== undefined
+          ? this.toDateOnly(dto.transaction_date)
+          : undefined;
+      if (dto.transaction_date !== undefined && !transaction_date) {
+        throw new BadRequestException('transaction_date is invalid');
       }
-      await this.refreshSourceStatus(old.fund_source_id);
-    }
-    return this.txRepo.findOne({ where: { id } });
+
+      const nextSourceId =
+        dto.fund_source_id !== undefined ? dto.fund_source_id : old.fund_source_id;
+      const nextAmount =
+        dto.amount !== undefined ? Number(dto.amount).toFixed(2) : old.amount;
+
+      if (dto.fund_source_id !== undefined && dto.fund_source_id !== old.fund_source_id) {
+        const dest = await sourceRepo.findOne({ where: { id: dto.fund_source_id } });
+        if (!dest) throw new NotFoundException('Fund source not found');
+        if (dest.status === 'Cancelled') {
+          throw new BadRequestException('Cannot move receipt to a Cancelled commitment');
+        }
+      }
+
+      await txRepo.update(id, {
+        ...(dto.fund_source_id !== undefined ? { fund_source_id: dto.fund_source_id } : {}),
+        ...(transaction_date !== undefined ? { transaction_date } : {}),
+        ...(dto.amount !== undefined ? { amount: nextAmount } : {}),
+        ...(dto.reference_no !== undefined ? { reference_no: dto.reference_no || null } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes || null } : {}),
+      });
+
+      // Adjust received balances if amount or source changed
+      if (
+        dto.amount !== undefined ||
+        (dto.fund_source_id !== undefined && dto.fund_source_id !== old.fund_source_id)
+      ) {
+        await manager.query(
+          `UPDATE fund_sources SET received_so_far = GREATEST(0, received_so_far - $1) WHERE id = $2`,
+          [old.amount, old.fund_source_id],
+        );
+        await manager.query(
+          `UPDATE fund_sources SET received_so_far = received_so_far + $1 WHERE id = $2`,
+          [nextAmount, nextSourceId],
+        );
+        await this.refreshSourceStatus(old.fund_source_id, manager);
+        if (nextSourceId !== old.fund_source_id) {
+          await this.refreshSourceStatus(nextSourceId, manager);
+        }
+      }
+
+      const updated = await txRepo.findOne({ where: { id } });
+      if (!updated) throw new NotFoundException('Fund transaction not found');
+
+      // Always rebuild FUND-* journal so GL date/amount/bank match the receipt
+      const source = await sourceRepo.findOne({ where: { id: updated.fund_source_id } });
+      if (!source) throw new NotFoundException('Fund source not found');
+      await this.accounting.deleteJournalByReference(`FUND-${id}`, manager);
+      await this.accounting.postFundReceiptJournal(
+        {
+          fund_transaction_id: updated.id,
+          fund_source_id: source.id,
+          source_name: source.source_name,
+          source_type: source.source_type,
+          bank_account_id: source.bank_account_id,
+          project_id: source.project_id,
+          transaction_date: this.toDateOnly(updated.transaction_date)!,
+          amount: updated.amount,
+        },
+        manager,
+      );
+
+      return updated;
+    });
   }
 
   async deleteTransaction(id: string) {

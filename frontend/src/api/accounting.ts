@@ -1,4 +1,4 @@
-import { getAuthHeaders, API_BASE } from './client';
+import { getAuthHeaders, readApiError, API_BASE } from './client';
 
 export interface Account {
   id: string;
@@ -184,21 +184,27 @@ export async function updateJournalEntry(
   id: string,
   dto: { entry: Partial<JournalEntry>; lines: JournalEntryLine[] },
 ): Promise<JournalEntry> {
+  const headers = getAuthHeaders();
+  if (!headers.Authorization) {
+    throw new Error('Session expired or not logged in. Please log out and log in again, then retry.');
+  }
   const res = await fetch(`${BASE}/journal/${id}`, {
     method: 'PATCH',
-    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(dto),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || 'Failed to update journal entry');
-  return data;
+  if (!res.ok) throw new Error(await readApiError(res, 'Failed to update journal entry'));
+  return res.json();
 }
 
 export async function deleteJournalEntry(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/journal/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+  const headers = getAuthHeaders();
+  if (!headers.Authorization) {
+    throw new Error('Session expired or not logged in. Please log out and log in again, then retry.');
+  }
+  const res = await fetch(`${BASE}/journal/${id}`, { method: 'DELETE', headers });
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || 'Failed to delete journal entry');
+    throw new Error(await readApiError(res, 'Failed to delete journal entry'));
   }
 }
 
