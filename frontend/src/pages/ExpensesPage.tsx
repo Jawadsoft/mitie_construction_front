@@ -17,7 +17,18 @@ import { exportCSV, exportPDF } from '../utils/exportUtils';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 
-const CATEGORIES = ['Land Purchase', 'Materials', 'Labour', 'Equipment Rental', 'Transport', 'Utilities', 'Administration', 'Other'];
+const CATEGORIES = [
+  'Land Purchase',
+  'Materials',
+  'Labour',
+  'Equipment Rental',
+  'Transport',
+  'Utilities',
+  'Fuel',
+  'Finance',
+  'Administration',
+  'Other',
+];
 const DIRECT_PAYMENT_TYPES = ['Cash', 'Bank Transfer', 'Cheque'];
 
 function needsBank(method: string) {

@@ -50,6 +50,11 @@ Leave historical root docs [`scope.md`](../scope.md) and [`development-plan.md`]
 | Stage gating | **DIRECT_SALE blocks stages** (API 400 + UI hide) | DEVELOPMENT uses stage management |
 | `asset_class` | Derived Residential/Commercial/Land | Compatibility for older filters |
 | Auto unit/parcel on create | **Not in this slice** | Units on Sales page; parcels on Land page |
+| Project cost (`total_spent`) | **expenses + labour_payments + material_issues** | Same definition on project cards, stage Actual, budget-vs-actual, profitability |
+| Payment reflection | Domain tx + posted JE + **computed-on-read** | No event bus / duplicate cash ledger; cashflow from Cash & Bank journals |
+| Investor Ledger | Read over `fund_sources` INVESTOR/EQUITY + txs | No new tables; Funds UI + `GET /api/funds/investor-ledger` |
+| Unit sale → project status | Last Available unit sold → project **Sold** | Skips Cancelled / Sold During Construction; mid-build path stays sell-during-construction |
+| Project card Upload Document | Toast “coming soon” | Real upload is **P5** |
 
 ## Schema application note
 

@@ -112,6 +112,22 @@ export class SalesService {
       const unit = await unitRepo.findOne({
         where: { id: sale.property_unit_id },
       });
+
+      if (unit?.project_id) {
+        const remainingAvailable = await unitRepo.count({
+          where: { project_id: unit.project_id, status: 'Available' },
+        });
+        if (remainingAvailable === 0) {
+          await manager.query(
+            `UPDATE projects
+             SET status = 'Sold', updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1
+               AND status NOT IN ('Cancelled', 'Sold During Construction', 'Sold')`,
+            [unit.project_id],
+          );
+        }
+      }
+
       await this.accounting.postSaleJournal(
         sale,
         unit?.project_id ?? null,

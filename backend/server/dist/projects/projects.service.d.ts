@@ -35,6 +35,8 @@ export declare class ProjectsService {
         id: string;
         name: string;
         location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
         plot_size: string | null;
         plot_size_sqft: string | null;
         start_date: string | null;
@@ -74,6 +76,8 @@ export declare class ProjectsService {
         id: string;
         name: string;
         location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
         plot_size: string | null;
         plot_size_sqft: string | null;
         start_date: string | null;
@@ -129,6 +133,8 @@ export declare class ProjectsService {
         id: string;
         name: string;
         location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
         plot_size: string | null;
         plot_size_sqft: string | null;
         start_date: string | null;
@@ -168,6 +174,8 @@ export declare class ProjectsService {
         id: string;
         name: string;
         location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
         plot_size: string | null;
         plot_size_sqft: string | null;
         start_date: string | null;
@@ -227,6 +235,8 @@ export declare class ProjectsService {
         id: string;
         name: string;
         location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
         plot_size: string | null;
         plot_size_sqft: string | null;
         start_date: string | null;

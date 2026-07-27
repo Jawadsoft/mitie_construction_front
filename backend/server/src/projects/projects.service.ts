@@ -97,11 +97,24 @@ export class ProjectsService {
     const rows: Array<{ project_stage_id: string; actual_cost: string }> =
       await this.dataSource.query(
         `
-        SELECT e.project_stage_id::text AS project_stage_id,
-          COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS actual_cost
-        FROM expenses e
-        WHERE e.project_id = $1 AND e.project_stage_id IS NOT NULL
-        GROUP BY e.project_stage_id
+        SELECT project_stage_id, SUM(amount) AS actual_cost
+        FROM (
+          SELECT e.project_stage_id::text AS project_stage_id,
+            CAST(e.amount AS NUMERIC) AS amount
+          FROM expenses e
+          WHERE e.project_id = $1 AND e.project_stage_id IS NOT NULL
+          UNION ALL
+          SELECT lp.project_stage_id::text AS project_stage_id,
+            CAST(lp.amount AS NUMERIC) AS amount
+          FROM labour_payments lp
+          WHERE lp.project_id = $1 AND lp.project_stage_id IS NOT NULL
+          UNION ALL
+          SELECT mi.project_stage_id::text AS project_stage_id,
+            CAST(mi.total_cost AS NUMERIC) AS amount
+          FROM material_issues mi
+          WHERE mi.project_id = $1 AND mi.project_stage_id IS NOT NULL
+        ) costs
+        GROUP BY project_stage_id
         `,
         [projectId],
       );
@@ -857,7 +870,11 @@ export class ProjectsService {
     }> = await this.dataSource.query(
       `
       SELECT p.id::text AS id,
-        COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0) AS total_spent,
+        (
+          COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
+        ) AS total_spent,
         COALESCE((
           SELECT SUM(CAST(s.total_paid AS NUMERIC)) FROM sales s
           JOIN property_units pu ON pu.id = s.property_unit_id
@@ -915,7 +932,7 @@ export class ProjectsService {
     const soldValue = Number(financials?.sold_value || 0);
     const fundReceipts = Number(financials?.fund_receipts || 0);
     const collectionBase = targetSale > 0 ? targetSale : soldValue;
-    // Profitability = sales created against project − project expenses (not collections)
+    // Profitability = sales − (expenses + labour + material issues)
     const profit = soldValue - totalSpent;
 
     return {

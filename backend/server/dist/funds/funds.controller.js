@@ -20,6 +20,9 @@ let FundsController = class FundsController {
     constructor(svc) {
         this.svc = svc;
     }
+    getInvestorLedger() {
+        return this.svc.getInvestorLedger();
+    }
     findSources(project_id, bank_account_id, status) {
         return this.svc.findSources({ project_id, bank_account_id, status });
     }
@@ -33,6 +36,12 @@ let FundsController = class FundsController {
     deleteTransaction(id) { return this.svc.deleteTransaction(id); }
 };
 exports.FundsController = FundsController;
+__decorate([
+    (0, common_1.Get)('investor-ledger'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], FundsController.prototype, "getInvestorLedger", null);
 __decorate([
     (0, common_1.Get)('sources'),
     __param(0, (0, common_1.Query)('project_id')),

@@ -94,6 +94,8 @@ export interface Project {
   id: string;
   name: string;
   location: string | null;
+  owner_name?: string | null;
+  manager_name?: string | null;
   /** Legacy free-text plot size */
   plot_size: string | null;
   /** Canonical area in square feet */

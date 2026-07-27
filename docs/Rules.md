@@ -48,6 +48,8 @@ Standards for the Construction ERP repo (`frontend/` + `backend/server/`). Also 
 - Thin controllers; business logic in services
 - Validate inputs (class-validator / explicit checks)—do not trust the client
 - Use transactions when writing linked rows (e.g. receipt + stock ledger)
+- Money movements: write ops row + `AccountingService.post*Journal` in the same transaction; do not add a second cash ledger or event bus for “reflection”
+- Project cost aggregates: expenses + labour_payments + material_issues (keep cards/reports/stages aligned)
 - Do not log passwords, tokens, or PII
 - New tables = TypeORM entities registered in a module (sync creates columns in current setup)
 

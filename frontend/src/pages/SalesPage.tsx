@@ -16,6 +16,7 @@ import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../compon
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { formatDate } from '../utils/date';
+import type { NavIntent } from '../types/navIntent';
 
 function bankLabel(b: BankAccount) {
   if (b.bank_name && b.name && b.bank_name.toLowerCase() !== b.name.toLowerCase()) {
@@ -40,7 +41,13 @@ const STATUS_COLORS: Record<string, string> = {
   Overdue: 'bg-red-100 text-red-700',
 };
 
-export default function SalesPage() {
+export default function SalesPage({
+  initialIntent,
+  onIntentConsumed,
+}: {
+  initialIntent?: NavIntent;
+  onIntentConsumed?: () => void;
+} = {}) {
   const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('inventory');
   const [units, setUnits] = useState<PropertyUnit[]>([]);
@@ -74,6 +81,7 @@ export default function SalesPage() {
   const [unitForm, setUnitForm] = useState({ project_id: '', unit_number: '', unit_type: '', area_sqft: '', floor: '', list_price: '', notes: '' });
   const [custForm, setCustForm] = useState({ name: '', phone: '', email: '', cnic: '', address: '' });
   const [saleForm, setSaleForm] = useState({ property_unit_id: '', customer_id: '', sale_date: new Date().toISOString().split('T')[0], total_sale_price: '', notes: '' });
+  const [saleFilterProjectId, setSaleFilterProjectId] = useState('');
   const [installForms, setInstallForms] = useState([{ due_date: '', due_amount: '' }]);
   const [payForm, setPayForm] = useState({
     sale_id: '',
@@ -112,6 +120,23 @@ export default function SalesPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!initialIntent?.action || initialIntent.action !== 'record-sale' || !initialIntent.projectId) return;
+    setTab('sales');
+    setSaleFilterProjectId(initialIntent.projectId);
+    setSaleForm({
+      property_unit_id: '',
+      customer_id: '',
+      sale_date: new Date().toISOString().split('T')[0],
+      total_sale_price: '',
+      notes: '',
+    });
+    setInstallForms([{ due_date: '', due_amount: '' }]);
+    setError('');
+    setShowModal('sale');
+    onIntentConsumed?.();
+  }, [initialIntent]);
 
   const openEditUnit = (u: PropertyUnit) => {
     setEditingUnit(u);
@@ -811,7 +836,7 @@ export default function SalesPage() {
       )}
 
       {showModal === 'sale' && (
-        <Modal title="New Sale" onClose={() => setShowModal('')}>
+        <Modal title="New Sale" onClose={() => { setShowModal(''); setSaleFilterProjectId(''); }}>
           <div className="space-y-3">
             {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
@@ -819,8 +844,23 @@ export default function SalesPage() {
               <select value={saleForm.property_unit_id} onChange={e => setSaleForm(f => ({ ...f, property_unit_id: e.target.value }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
                 <option value="">-- Select Available Unit --</option>
-                {units.filter(u => u.status === 'Available').map(u => <option key={u.id} value={u.id}>Unit {u.unit_number} – PKR {Number(u.list_price).toLocaleString()}</option>)}
+                {units
+                  .filter((u) => u.status === 'Available')
+                  .filter((u) => !saleFilterProjectId || u.project_id === saleFilterProjectId)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      Unit {u.unit_number} – PKR {Number(u.list_price).toLocaleString()}
+                    </option>
+                  ))}
               </select>
+              {saleFilterProjectId && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Filtered to project units
+                  {projects.find((p) => p.id === saleFilterProjectId)
+                    ? `: ${projects.find((p) => p.id === saleFilterProjectId)!.name}`
+                    : ''}
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Customer *</label>

@@ -4,15 +4,15 @@ Construction ERP project docs. Active stack: **React + Vite** (`frontend/`) and 
 
 **Commercial build order:** P1–P5 in [Tasks.md](Tasks.md) (Accounting deepen → MR approvals → BOQ → Equipment → Documents). Agents must follow that order for feature work and keep these docs updated.
 
-**Project lifecycle:** Funds → Project (`READY_PROPERTY` or `LAND`) with strategy **Direct Sale** or **Development** → Sale → Profit. See [PRD.md](PRD.md).
+**Project lifecycle:** Funds → Project (`READY_PROPERTY` or `LAND`) with strategy **Direct Sale** or **Development** → Sale → Profit. Payments reflect across modules via journals + computed reads (see [Architecture.md](Architecture.md) Payment reflection). See [PRD.md](PRD.md).
 
 | Doc | Purpose |
 |-----|---------|
 | [PRD.md](PRD.md) | Product requirements and lifecycle |
-| [Architecture.md](Architecture.md) | Stack, folders, auth/data flows |
+| [Architecture.md](Architecture.md) | Stack, folders, auth/data flows, payment reflection |
 | [Database.md](Database.md) | Tables from TypeORM entities |
 | [API.md](API.md) | Nest `/api/*` endpoint inventory |
-| [Design.md](Design.md) | UI/UX conventions (Tailwind) |
+| [Design.md](Design.md) | UI/UX conventions (Tailwind), project cards |
 | [Rules.md](Rules.md) | Coding standards for this repo |
 | [Phases.md](Phases.md) | Phased roadmap checklists |
 | [Tasks.md](Tasks.md) | Actionable backlog + commercial priorities P1–P5 |

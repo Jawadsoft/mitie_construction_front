@@ -112,12 +112,37 @@ flowchart LR
 
 Goods receipt API writes stock `RECEIPT` rows in the same flow as marking the PO received.
 
-Creating an **expense**, **sale**, **installment payment**, or **sale collect** also creates and posts balanced journal entries (refs `EXP-*` / `SALE-*` / `PMT-*`) against seeded COA accounts.
+Creating an **expense**, **labour payment**, **sale**, **installment payment**, **sale collect**, or **fund receipt** also creates and posts balanced journal entries (refs `EXP-*` / `EXPPMT-*` / `LABOUR-*` / `SALE-*` / `PMT-*` / `FUND-*`) against seeded COA accounts.
+
+## Payment reflection
+
+```mermaid
+flowchart LR
+  payment[Payment_API]
+  payment --> ops[Ops_tables]
+  payment --> je[Journal_entries]
+  je --> cash[Cashflow_read]
+  ops --> cost[Project_Stage_cost]
+  ops --> profit[Profit_reports]
+  ops --> bal[Balances_payables]
+```
+
+| Event | Reflects into |
+|-------|----------------|
+| Supplier expense / bill pay | Cashflow, supplier AP, project/stage cost, profit |
+| Labour payment | Cashflow, labour cost, stage cost (if stage set), project cost, profit |
+| Fund received | Fund received, cash, available capital, Investor Ledger |
+| Property sale | Revenue, receivables, profit; project → Sold when last unit sold |
+| Sale collection | Cashflow IN, receivables ↓ |
+
+**Project cost definition:** `total_spent` = expenses + labour_payments + material_issues (aligned across cards, stages, reports).
 
 **Sale collections**
 
 - Single installment: `POST /api/sales/installments/:id/pay`
 - Full/direct on a sale: `POST /api/sales/list/:id/collect` — applies amount FIFO to open installments by `due_date`; if money remains and the sale still has balance, creates a catch-up installment and pays it in the same transaction. Rejects amounts above sale balance due. Project cards expose both modes via **+ Collection**.
+
+**Nav intent:** Project card strategy actions set `navIntent` in `App.tsx` so Inventory / Labour / Sales / Reports / Project Detail open with the project prefilled (and the matching modal when applicable).
 
 ## Project type and strategy
 

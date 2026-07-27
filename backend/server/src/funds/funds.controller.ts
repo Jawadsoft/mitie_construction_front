@@ -5,6 +5,10 @@ import { FundsService } from './funds.service';
 export class FundsController {
   constructor(private readonly svc: FundsService) {}
 
+  @Get('investor-ledger') getInvestorLedger() {
+    return this.svc.getInvestorLedger();
+  }
+
   @Get('sources') findSources(
     @Query('project_id') project_id?: string,
     @Query('bank_account_id') bank_account_id?: string,

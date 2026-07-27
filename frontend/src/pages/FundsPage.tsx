@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   getFundSources, createFundSource, updateFundSource, deleteFundSource,
   getFundTransactions, createFundTransaction, updateFundTransaction, deleteFundTransaction,
+  getInvestorLedger,
 } from '../api/funds';
-import type { FundSource, FundTransaction } from '../api/funds';
+import type { FundSource, FundTransaction, InvestorLedger } from '../api/funds';
 import { getBankAccounts, createBankAccount } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
 import {
@@ -108,6 +109,7 @@ export default function FundsPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [editingSource, setEditingSource] = useState<FundSource | null>(null);
   const [editingTx, setEditingTx] = useState<FundTransaction | null>(null);
+  const [investorLedger, setInvestorLedger] = useState<InvestorLedger | null>(null);
 
   const [sourceForm, setSourceForm] = useState(emptySourceForm);
   const [txForm, setTxForm] = useState(emptyTxForm);
@@ -117,16 +119,18 @@ export default function FundsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, t, b, p] = await Promise.all([
+      const [s, t, b, p, ledger] = await Promise.all([
         getFundSources(filterStatus ? { status: filterStatus } : undefined),
         getFundTransactions(selectedSource || undefined),
         getBankAccounts(),
         getProjects(),
+        getInvestorLedger(),
       ]);
       setSources(s);
       setTransactions(t);
       setBanks(b);
       setProjects(p);
+      setInvestorLedger(ledger);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load funds');
     } finally {
@@ -393,6 +397,79 @@ export default function FundsPage() {
         <StatCard title="Loan Amount" value={`PKR ${loanAmount.toLocaleString()}`} icon="🏦" color="yellow" />
         <StatCard title="Owner Capital" value={`PKR ${ownerCapital.toLocaleString()}`} icon="🏠" color="green" />
       </div>
+
+      {investorLedger && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-gray-800">Investor Ledger</h2>
+              <p className="text-xs text-slate-500">INVESTOR &amp; EQUITY commitments and receipts</p>
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs">
+              <span className="text-slate-600">
+                Received:{' '}
+                <strong className="text-emerald-700">
+                  PKR {investorLedger.total_received.toLocaleString()}
+                </strong>
+              </span>
+              <span className="text-slate-600">
+                Available capital:{' '}
+                <strong>PKR {investorLedger.available_capital.toLocaleString()}</strong>
+              </span>
+              <span className="text-slate-600">
+                Remaining:{' '}
+                <strong className="text-amber-700">
+                  PKR {investorLedger.remaining_commitments.toLocaleString()}
+                </strong>
+              </span>
+            </div>
+          </div>
+          {investorLedger.entries.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-slate-400">No investor or equity fund sources yet.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {investorLedger.entries.map((entry) => (
+                <div key={entry.id} className="px-4 py-3 space-y-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-slate-900">{entry.source_name}</p>
+                      <p className="text-xs text-slate-500">
+                        {SOURCE_TYPE_LABELS[entry.source_type] || entry.source_type}
+                        {entry.bank_label ? ` · ${entry.bank_label}` : ''}
+                        {entry.project_name ? ` · ${entry.project_name}` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs space-y-0.5">
+                      <p className="text-slate-500">
+                        Committed: <span className="font-mono text-slate-800">PKR {entry.committed.toLocaleString()}</span>
+                      </p>
+                      <p className="text-emerald-700">
+                        Received: <span className="font-mono">PKR {entry.received.toLocaleString()}</span>
+                      </p>
+                      <p className="text-amber-700">
+                        Remaining: <span className="font-mono">PKR {entry.remaining.toLocaleString()}</span>
+                      </p>
+                    </div>
+                  </div>
+                  {entry.transactions.length > 0 && (
+                    <div className="rounded-lg bg-slate-50 px-3 py-2 space-y-1">
+                      {entry.transactions.slice(0, 5).map((tx) => (
+                        <div key={tx.id} className="flex justify-between text-xs text-slate-600">
+                          <span>{formatDate(tx.transaction_date)}{tx.reference_no ? ` · ${tx.reference_no}` : ''}</span>
+                          <span className="font-mono text-emerald-700">+ PKR {tx.amount.toLocaleString()}</span>
+                        </div>
+                      ))}
+                      {entry.transactions.length > 5 && (
+                        <p className="text-[10px] text-slate-400">+{entry.transactions.length - 5} more receipts</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold text-gray-800 mr-2">Fund Commitments</h2>

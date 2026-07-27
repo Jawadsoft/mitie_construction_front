@@ -98,7 +98,7 @@ Sale → Profit
 
 ### Projects and stages
 
-- Create/manage projects (status, budget, location, plot size, dates)
+- Create/manage projects (status, budget, location, plot size, dates, optional **owner** / **manager** names)
 - Plot size: enter once in Gazz, Sq. Ft, or Marla; system stores `plot_size_sqft` and shows live equivalents (Marla factor from Settings)
 - Statuses: Planning, Active, On Hold, Completed, Sold, Sold During Construction, Cancelled
 - Required on create: `project_type`, `project_subtype`, `project_strategy`
@@ -106,8 +106,10 @@ Sale → Profit
 - Location entry via Pakistan city/area typeahead (`PakistanLocationInput`); free text still allowed
 - Construction stages only for `DEVELOPMENT` strategy (Direct Sale blocks stage create)
 - DEVELOPMENT create auto-seeds 11 stages (Land Purchase → … → Ready For Sale)
-- Stage detail: budget, actual cost (expense rollup), dates, completion %
+- **Project Detail workspace:** Overview + Financial Summary; tabs for Construction, Funding, Inventory, Procurement, Labour, Expenses, Sales, Profitability
+- Stage detail: budget, actual cost (expenses + labour + material issues), dates, completion %
 - **Sell Project** mid-construction: Sold As-Is → status Sold During Construction; stage edits locked
+- Unit sales: when the last Available unit for a project is sold → project status **Sold** (separate from mid-construction path)
 
 ### Land registry
 
@@ -137,28 +139,33 @@ Site Engineer → Material Request → Approval → Purchase Order
 ### Labour
 
 - Contractors, attendance, wages, advances
+- Payments: optional stage (stage Actual) + bank account for Bank Transfer / Cheque; JE `LABOUR-*`
 
 ### Expenses and funds
 
 - Project/stage expenses by category — **Direct** (cash/bank) or **Bill** (AP accrual) with later Pay
+- Categories include Land Purchase, Materials, Labour, Equipment Rental, Transport, Utilities, **Fuel**, **Finance**, Administration, Other
 - **Funds (first step):** commitments linked to partner banks; receipts auto-post to each bank’s Cash & Bank **sub-account** (journal + trial balance)
 - Commitment statuses: `Committed` → `Partially_Received` → `Fully_Received` (or `Cancelled`)
 - Fund dashboard KPIs: Total Committed / Received / Pending; Investor count; Loan amount; Owner capital (equity)
+- **Investor Ledger:** INVESTOR/EQUITY committed vs received + receipt history (`GET /api/funds/investor-ledger`)
 - Commitment form UX: Source Name combobox; Total Committed min PKR 1,000 with comma formatting + amount in words; optional project link with inline create
 - Quick-add partner bank: major PK banks combobox (HBL, NBP, UBL, …) + Other; opening balance defaults to 0 (set under Accounting if needed)
 - Optional link of fund source to project for card rollups; project funding should originate from Funds
-- Project file: budget + target sale price; card shows spent / collected progress
-- Project cards: quick **+ Expense**, **+ Collection**, **+ Payment**
+- Project file: budget + target sale price; card shows Completion / Budget / Actual / Profit
+- Project cards: common + strategy-specific quick actions; secondary **+ Collection** / Activity / Edit / Delete
   - **+ Collection:** Installment payment (single open installment) or Full/Direct (lump sum on a sale; FIFO across installments, catch-up installment if needed)
+  - Upload Document on card is toast-only until P5
 
 ### Sales
 
 - Property units, customers, sales, installments
 - Collections: pay one installment, or full/direct collect against the sale (updates `total_paid`, installment statuses, and posts `PMT-*` journals)
+- Sale create books revenue + AR; cashflow updates on collection; last unit sold → project Sold
 
 ### Cashflow
 
-- Cash/bank transaction register and summaries
+- Cash/bank transaction register and summaries (derived from Cash & Bank journals for domain payments)
 
 ### Accounting
 
@@ -185,21 +192,24 @@ Site Engineer → Material Request → Approval → Purchase Order
 
 - Store drawings, contracts, NOCs, approvals, site photos
 - Link documents to projects (and land parcels where relevant)
-- Real blob upload (beyond URL string fields on land parcels)
+- Real blob upload (beyond URL string fields on land parcels; beyond card toast)
 - Detail: [scope.md §15](../scope.md#15-document-management)
 
 ### Reporting and dashboard
 
 - Project profitability, budget vs actual, P&L (operational), cashflow, payables/receivables, labour/expense breakdowns
 - Dashboard KPIs and navigation
+- Project cost and stage Actual use expenses + labour + material issues
 
 ## System rules
 
-Every cost entry should include: project, stage, category, vendor or labour, payment type, date.
+Every cost entry should include: project, stage (when applicable), category, vendor or labour, payment type, date.
 
-Every payment should update: cash balance, payables, stage cost, project cost.
+Every payment should update (via journal + computed reads): cash balance, payables/receivables as applicable, stage cost, project cost, profit.
 
-Every sale should update: revenue, customer receivables, project profit.
+Every sale should update: revenue, customer receivables, project profit; project status when inventory is fully sold.
+
+**Project cost definition:** `total_spent` = expenses + labour_payments + material_issues.
 
 ## Non-functional requirements
 

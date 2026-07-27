@@ -209,6 +209,7 @@ export declare class AccountingService implements OnModuleInit {
         payment_method?: string | null;
         notes?: string | null;
         contractor_name?: string | null;
+        bank_account_id?: string | null;
     }, manager?: EntityManager): Promise<{
         lines: JournalEntryLine[];
         id: string;

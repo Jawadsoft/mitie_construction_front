@@ -12,6 +12,7 @@ import type {
 } from '../api/reports';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
+import type { NavIntent } from '../types/navIntent';
 
 type ReportTab = 'profitability' | 'budget' | 'pl' | 'partners-equity' | 'cashflow' | 'payables' | 'receivables' | 'labour' | 'expenses';
 
@@ -34,7 +35,13 @@ function ProgressBar({ pct, color = 'blue' }: { pct: number; color?: string }) {
   );
 }
 
-export default function ReportsPage() {
+export default function ReportsPage({
+  initialIntent,
+  onIntentConsumed,
+}: {
+  initialIntent?: NavIntent;
+  onIntentConsumed?: () => void;
+} = {}) {
   const [tab, setTab] = useState<ReportTab>('profitability');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState('');
@@ -56,6 +63,13 @@ export default function ReportsPage() {
   const [partnersEquity, setPartnersEquity] = useState<PartnersEquityReport | null>(null);
 
   useEffect(() => { getProjects().then(setProjects).catch(() => {}); }, []);
+
+  useEffect(() => {
+    if (!initialIntent?.action || initialIntent.action !== 'view-profit') return;
+    setTab('profitability');
+    if (initialIntent.projectId) setSelectedProject(initialIntent.projectId);
+    onIntentConsumed?.();
+  }, [initialIntent]);
 
   const loadReport = async () => {
     setLoading(true); setError('');

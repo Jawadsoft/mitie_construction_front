@@ -62,6 +62,21 @@ export async function createReceipt(
   if (!res.ok) throw new Error('Failed to record receipt');
 }
 
+export interface MaterialReceipt {
+  id: string;
+  purchase_order_id: string;
+  receipt_date: string;
+  notes: string | null;
+  created_at?: string;
+}
+
+export async function getProcurementReceipts(purchase_order_id?: string): Promise<MaterialReceipt[]> {
+  const params = purchase_order_id ? `?purchase_order_id=${purchase_order_id}` : '';
+  const res = await fetch(`${BASE}/receipts${params}`, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch receipts');
+  return res.json();
+}
+
 export async function deletePurchaseOrder(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/procurement/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to delete purchase order');

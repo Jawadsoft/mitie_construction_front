@@ -31,21 +31,26 @@ let ReportsService = class ReportsService {
         p.id AS project_id,
         p.name AS project_name,
         COALESCE(p.total_estimated_budget, 0) AS total_budget,
-        COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS total_spent,
-        COALESCE(p.total_estimated_budget, 0) - COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS variance
+        (
+          COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
+        ) AS total_spent
       FROM projects p
-      LEFT JOIN expenses e ON e.project_id = p.id
       ${whereProj}
-      GROUP BY p.id, p.name, p.total_estimated_budget
       ORDER BY p.name
     `, project_id ? [project_id] : []);
-        return rows.map((r) => ({
-            ...r,
-            total_budget: Number(r.total_budget),
-            total_spent: Number(r.total_spent),
-            variance: Number(r.variance),
-            utilization_pct: r.total_budget > 0 ? Math.round((Number(r.total_spent) / Number(r.total_budget)) * 100) : 0,
-        }));
+        return rows.map((r) => {
+            const total_budget = Number(r.total_budget);
+            const total_spent = Number(r.total_spent);
+            return {
+                ...r,
+                total_budget,
+                total_spent,
+                variance: total_budget - total_spent,
+                utilization_pct: total_budget > 0 ? Math.round((total_spent / total_budget) * 100) : 0,
+            };
+        });
     }
     async getStageBudgetVsActual(project_id) {
         const rows = await this.q(`
@@ -53,15 +58,15 @@ let ReportsService = class ReportsService {
         ps.id AS stage_id,
         ps.name AS stage_name,
         COALESCE(sb.labour_budget,0)+COALESCE(sb.material_budget,0)+COALESCE(sb.equipment_budget,0)+COALESCE(sb.other_budget,0) AS stage_budget,
-        COALESCE(SUM(CAST(e.amount AS NUMERIC)), 0) AS actual_cost,
+        (
+          COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_stage_id = ps.id), 0)
+          + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_stage_id = ps.id), 0)
+          + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_stage_id = ps.id), 0)
+        ) AS actual_cost,
         ps.completion_percent
       FROM project_stages ps
       LEFT JOIN stage_budgets sb ON sb.project_stage_id = ps.id
-      LEFT JOIN expenses e ON e.project_stage_id = ps.id
       WHERE ps.project_id = $1
-      GROUP BY ps.id, ps.name,
-        COALESCE(sb.labour_budget,0)+COALESCE(sb.material_budget,0)+COALESCE(sb.equipment_budget,0)+COALESCE(sb.other_budget,0),
-        ps.completion_percent
       ORDER BY ps.sequence_order
     `, [project_id]);
         return rows.map((r) => ({

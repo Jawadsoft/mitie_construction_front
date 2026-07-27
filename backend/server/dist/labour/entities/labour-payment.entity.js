@@ -17,6 +17,7 @@ let LabourPayment = class LabourPayment {
     contractor_id;
     project_id;
     project_stage_id;
+    bank_account_id;
     payment_date;
     amount;
     payment_method;
@@ -44,6 +45,10 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
     __metadata("design:type", Object)
 ], LabourPayment.prototype, "project_stage_id", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], LabourPayment.prototype, "bank_account_id", void 0);
 __decorate([
     (0, typeorm_1.Column)({ type: 'date' }),
     __metadata("design:type", String)

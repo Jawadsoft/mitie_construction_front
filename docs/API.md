@@ -57,6 +57,8 @@ Health/ping are intentionally public.
   "project_subtype": "ALREADY_CONSTRUCTED_HOUSE | APARTMENT | COMMERCIAL_SHOP | WAREHOUSE | EMPTY_PLOT | RAW_LAND | AGRICULTURAL_LAND | COMMERCIAL_PLOT",
   "project_strategy": "DIRECT_SALE | DEVELOPMENT",
   "location": "string?",
+  "owner_name": "string?",
+  "manager_name": "string?",
   "plot_size_sqft": "number? (canonical area in sq ft; UI converts Gazz/Marla)",
   "plot_size": "string? (legacy free-text; cleared when plot_size_sqft is set)",
   "start_date": "YYYY-MM-DD?",
@@ -84,6 +86,12 @@ Invalid combinations (e.g. `READY_PROPERTY` + `DEVELOPMENT`, or subtype not in t
 `POST/PATCH .../stages` on a `DIRECT_SALE` project → **400**.
 
 Legacy aliases `project_category` / `project_purpose` / `LAND_ONLY` / `BUY_*` are normalized server-side when present.
+
+**List/detail enrichment (`computed`):**
+
+- `total_spent` = expenses + labour_payments + material_issues (same definition as profitability reports)
+- Stage `actual_cost` = expenses + labour + material issues for that `project_stage_id`
+- `profit` = `sold_value − total_spent`; card shows **Pending** when `sold_value === 0`
 
 ---
 
@@ -172,8 +180,10 @@ Declare static `receipts` route before `:id` (already ordered in controller).
 | GET/POST | `/api/labour/attendance` | List (query project/contractor) / create |
 | PATCH/DELETE | `/api/labour/attendance/:id` | Update / delete |
 | GET | `/api/labour/wages` | Calculated wages; query project/contractor |
-| GET/POST | `/api/labour/payments` | List / create |
-| PATCH/DELETE | `/api/labour/payments/:id` | Update / delete |
+| GET/POST | `/api/labour/payments` | List / create (optional `project_stage_id`, `bank_account_id`; JE `LABOUR-*`) |
+| PATCH/DELETE | `/api/labour/payments/:id` | Update / delete (+ rebuild/delete `LABOUR-*`) |
+
+Labour payment body: `contractor_id`, `project_id`, `payment_date`, `amount` required. Optional `project_stage_id` (feeds stage Actual). Optional `bank_account_id` required when method is Bank Transfer / Cheque / Online. Journal: Dr `5100` / Cr selected bank or Cash.
 | GET/POST | `/api/labour/advances` | List / create |
 
 ---
@@ -199,6 +209,7 @@ Expense COA map: LABOUR→5100; SUPPLIER/material→5200; overhead/land/admin→
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/funds/investor-ledger` | INVESTOR + EQUITY sources: committed / received / remaining + receipt list |
 | GET | `/api/funds/sources` | List; query `bank_account_id`, `project_id`, `status` (joins bank name) |
 | GET | `/api/funds/sources/:id` | Get source |
 | POST | `/api/funds/sources` | Create commitment (`bank_account_id` required; status defaults Committed) |
@@ -208,6 +219,8 @@ Expense COA map: LABOUR→5100; SUPPLIER/material→5200; overhead/land/admin→
 | PATCH/DELETE | `/api/funds/transactions/:id` | Update / delete (+ status recompute) |
 
 Status rules: `Committed` (received≈0), `Partially_Received`, `Fully_Received` (received≥committed); `Cancelled` is manual and sticky until reactivated.
+
+Investor ledger response: `{ total_committed, total_received, available_capital, remaining_commitments, entries[] }`.
 
 ---
 
@@ -237,11 +250,13 @@ Static paths `summary` / `dashboard` should be registered before `:id` — verif
 | PATCH/DELETE | `/api/sales/units/:id` | Update / delete |
 | GET | `/api/sales/list` | List sales; query project/customer |
 | GET | `/api/sales/list/:id` | One sale |
-| POST | `/api/sales/list` | Create sale (**also** posts JE `SALE-{id}`: Dr 1100 AR / Cr 4000 Revenue) |
+| POST | `/api/sales/list` | Create sale (**also** posts JE `SALE-{id}`: Dr 1100 AR / Cr 4000 Revenue); marks unit Sold; if no Available units remain on the project → project `status = Sold` (skips Cancelled / Sold During Construction) |
 | POST | `/api/sales/list/:id/collect` | Full/direct collection: FIFO pay open installments (+ catch-up installment if needed); body `paid_amount`, `paid_date`; posts `PMT-*` per slice; 400 if over sale balance |
 | PATCH/DELETE | `/api/sales/list/:id` | Update / delete |
 | GET | `/api/sales/installments` | List; query `sale_id`, `status` |
-| POST | `/api/sales/installments/:id/pay` | Record installment payment (**also** posts JE `PMT-{id}`: Dr 1000 / Cr 1100); used by Installment collection mode |
+| POST | `/api/sales/installments/:id/pay` | Record installment payment (**also** posts JE `PMT-{id}`: Dr Cash&Bank / Cr 1100); used by Installment collection mode |
+
+**Payment reflection:** Sale create updates revenue/AR/profit immediately; cashflow moves on collection (`PMT-*`). Mid-construction whole-project sale remains `POST /api/projects/:id/sell-during-construction`.
 
 ---
 
@@ -278,8 +293,8 @@ Operational auto-journals (expenses/sales/funds) use refs `EXP-*`, `SALE-*`, `PM
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/reports/budget-vs-actual` | Query `project_id` |
-| GET | `/api/reports/stage-budget/:project_id` | Stage budget vs actual |
+| GET | `/api/reports/budget-vs-actual` | Query `project_id` — spent = expenses + labour + material issues |
+| GET | `/api/reports/stage-budget/:project_id` | Stage budget vs actual (same cost sources by stage) |
 | GET | `/api/reports/profitability` | Query `project_id` |
 | GET | `/api/reports/profit-loss` | Query `from`, `to` |
 | GET | `/api/reports/supplier-payables` | Payables |

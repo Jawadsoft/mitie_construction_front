@@ -25,6 +25,8 @@ export interface LabourPayment {
   id: string;
   contractor_id: string;
   project_id: string;
+  project_stage_id?: string | null;
+  bank_account_id?: string | null;
   payment_date: string;
   amount: string;
   payment_method: string;
@@ -135,3 +137,39 @@ export const getPaymentsByContractor = async (contractor_id: string): Promise<La
   if (!res.ok) throw new Error('Failed to fetch payments');
   return res.json();
 };
+
+export interface LabourWageRow {
+  contractor_id: string;
+  contractor_name: string;
+  daily_rate: number;
+  total_days: number;
+  gross_wages: number;
+  total_paid: number;
+  advances_given: number;
+  balance_due: number;
+}
+
+export interface LabourAdvance {
+  id: string;
+  contractor_id: string;
+  project_id: string;
+  advance_date: string;
+  amount: string;
+  recovered_amount: string;
+  notes: string | null;
+  contractor?: LabourContractor;
+}
+
+export async function getWages(project_id?: string): Promise<LabourWageRow[]> {
+  const params = project_id ? `?project_id=${project_id}` : '';
+  const res = await fetch(`${BASE}/wages${params}`, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch wages');
+  return res.json();
+}
+
+export async function getAdvances(project_id?: string): Promise<LabourAdvance[]> {
+  const params = project_id ? `?project_id=${project_id}` : '';
+  const res = await fetch(`${BASE}/advances${params}`, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch advances');
+  return res.json();
+}

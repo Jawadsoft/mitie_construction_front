@@ -36,7 +36,9 @@ export declare class LabourService {
         contractor_id?: string;
     }): Promise<LabourPayment[]>;
     private postPaymentJournal;
-    createPayment(dto: Partial<LabourPayment>): Promise<LabourPayment | null>;
+    createPayment(dto: Partial<LabourPayment> & {
+        bank_account_id?: string | null;
+    }): Promise<LabourPayment | null>;
     findAdvances(filters: {
         project_id?: string;
         contractor_id?: string;

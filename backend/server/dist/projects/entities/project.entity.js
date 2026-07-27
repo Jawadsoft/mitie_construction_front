@@ -16,6 +16,8 @@ let Project = class Project {
     id;
     name;
     location;
+    owner_name;
+    manager_name;
     plot_size;
     plot_size_sqft;
     start_date;
@@ -48,9 +50,17 @@ __decorate([
     __metadata("design:type", String)
 ], Project.prototype, "name", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
+    (0, typeorm_1.Column)({ type: 'varchar', length: 150, nullable: true }),
     __metadata("design:type", Object)
 ], Project.prototype, "location", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 150, nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "owner_name", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 150, nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "manager_name", void 0);
 __decorate([
     (0, typeorm_1.Column)({ type: 'varchar', length: 100, nullable: true }),
     __metadata("design:type", Object)

@@ -7,14 +7,20 @@ import {
   normalizeProjectFields,
   STRATEGY_LABELS,
   TYPE_LABELS,
+  SUBTYPE_LABELS,
 } from '../api/projects';
-import type { Project, Stage } from '../api/projects';
+import type { Project, Stage, ProjectSubtype } from '../api/projects';
 import FieldLabel from '../components/FieldLabel';
 import MoneyInput from '../components/MoneyInput';
 import ProjectActivityLog from '../components/ProjectActivityLog';
+import {
+  ProjectWorkspacePanels,
+  type WorkspaceTab,
+} from '../components/project-detail/ProjectWorkspacePanels';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { notify, notifyError } from '../utils/toast';
 import { parseMoneyInput } from '../utils/money';
+import type { NavIntent } from '../types/navIntent';
 
 function moneyDigits(raw: string | number | null | undefined): string {
   if (raw == null || raw === '') return '';
@@ -60,6 +66,8 @@ const DEFAULT_STAGES = [
 interface Props {
   projectId: string;
   onBack: () => void;
+  initialIntent?: NavIntent;
+  onIntentConsumed?: () => void;
 }
 
 const emptyStageForm = {
@@ -72,7 +80,12 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function ProjectDetailPage({ projectId, onBack }: Props) {
+export default function ProjectDetailPage({
+  projectId,
+  onBack,
+  initialIntent,
+  onIntentConsumed,
+}: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,6 +101,7 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
   const [addingDefaults, setAddingDefaults] = useState(false);
   const [defaultSuccess, setDefaultSuccess] = useState('');
   const [selling, setSelling] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('construction');
   const [sellForm, setSellForm] = useState({
     buyer_name: '',
     sale_price: '',
@@ -104,6 +118,14 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
   };
 
   useEffect(() => { load(); }, [projectId]);
+
+  useEffect(() => {
+    if (!project) return;
+    const strategy = normalizeProjectFields(project).project_strategy;
+    if (strategy === 'DIRECT_SALE') {
+      setWorkspaceTab((t) => (t === 'construction' ? 'sales' : t));
+    }
+  }, [project?.id, project?.project_strategy]);
 
   const stages = useMemo(
     () => [...(project?.stages || [])].sort((a, b) => a.sequence_order - b.sequence_order),
@@ -135,6 +157,26 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
     });
     setShowStageForm(true);
   };
+
+  useEffect(() => {
+    if (!initialIntent?.action || !project || loading) return;
+    if (initialIntent.projectId && initialIntent.projectId !== projectId) {
+      onIntentConsumed?.();
+      return;
+    }
+    if (initialIntent.action === 'update-stage') {
+      setWorkspaceTab('construction');
+      if (currentStage) openEditStage(currentStage);
+      else setShowStageForm(true);
+      onIntentConsumed?.();
+      return;
+    }
+    if (initialIntent.action === 'sell-project') {
+      setWorkspaceTab('construction');
+      setShowSellModal(true);
+      onIntentConsumed?.();
+    }
+  }, [initialIntent, project, loading, projectId, currentStage]);
 
   const handleStageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -302,28 +344,92 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
           )}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-slate-100">
-          <div className="p-4">
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Total Budget</p>
-            <p className="text-base font-bold text-slate-800 mt-1">
-              {project.total_estimated_budget
-                ? `PKR ${Number(project.total_estimated_budget).toLocaleString()}`
-                : '—'}
-            </p>
+        <div className="px-5 py-4 border-t border-slate-100 space-y-4">
+          <div>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Overview</h2>
+            <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-slate-400">Project Name</dt>
+                <dd className="font-medium text-slate-900">{project.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Type</dt>
+                <dd className="font-medium text-slate-900">
+                  {tax.project_type ? TYPE_LABELS[tax.project_type] : '—'}
+                  {project.project_subtype
+                    ? ` · ${SUBTYPE_LABELS[project.project_subtype as ProjectSubtype] || project.project_subtype}`
+                    : ''}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Strategy</dt>
+                <dd className="font-medium text-slate-900">
+                  {tax.project_strategy ? STRATEGY_LABELS[tax.project_strategy] : '—'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Status</dt>
+                <dd className="font-medium text-slate-900">{project.status}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Location</dt>
+                <dd className="font-medium text-slate-900">{project.location || '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Owner</dt>
+                <dd className="font-medium text-slate-900">{project.owner_name || '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Manager</dt>
+                <dd className="font-medium text-slate-900">{project.manager_name || '—'}</dd>
+              </div>
+            </dl>
           </div>
-          <div className="p-4">
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Stage Budget</p>
-            <p className="text-base font-bold text-slate-800 mt-1">
-              PKR {(project.computed?.total_stage_budget || 0).toLocaleString()}
-            </p>
-          </div>
-          <div className="p-4">
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Completion</p>
-            <p className="text-base font-bold text-green-600 mt-1">{project.computed?.avg_completion_percent ?? 0}%</p>
-          </div>
-          <div className="p-4">
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Total Stages</p>
-            <p className="text-base font-bold text-slate-800 mt-1">{project.computed?.stage_count ?? 0}</p>
+
+          <div>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Financial Summary</h2>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {(() => {
+                const budget = Number(project.total_estimated_budget || 0);
+                const actual = Number(project.computed?.total_spent ?? 0);
+                const revenue = Number(project.computed?.sold_value ?? 0);
+                const target = Number(project.target_sale_price || 0);
+                const expected =
+                  target > 0 && budget > 0 ? target - budget : null;
+                const actualProfit = Number(project.computed?.profit ?? 0);
+                const profitPending = revenue <= 0;
+                return (
+                  <>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase text-slate-400 font-medium">Budget</p>
+                      <p className="text-sm font-bold text-slate-800 mt-0.5">
+                        {budget > 0 ? `PKR ${budget.toLocaleString()}` : '—'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase text-slate-400 font-medium">Actual Cost</p>
+                      <p className="text-sm font-bold text-red-700 mt-0.5">PKR {actual.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase text-slate-400 font-medium">Revenue</p>
+                      <p className="text-sm font-bold text-emerald-700 mt-0.5">PKR {revenue.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase text-slate-400 font-medium">Expected Profit</p>
+                      <p className="text-sm font-bold text-slate-800 mt-0.5">
+                        {expected != null ? `PKR ${expected.toLocaleString()}` : '—'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] uppercase text-slate-400 font-medium">Actual Profit</p>
+                      <p className={`text-sm font-bold mt-0.5 ${profitPending ? 'text-amber-700' : actualProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {profitPending ? 'Pending' : `PKR ${actualProfit.toLocaleString()}`}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
           </div>
         </div>
 
@@ -339,7 +445,42 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
         )}
       </div>
 
-      {allowStages && (
+      {(() => {
+        const tabs: { id: WorkspaceTab; label: string; hide?: boolean }[] = [
+          { id: 'construction', label: 'Construction', hide: !allowStages },
+          { id: 'funding', label: 'Funding' },
+          { id: 'inventory', label: 'Inventory' },
+          { id: 'procurement', label: 'Procurement' },
+          { id: 'labour', label: 'Labour' },
+          { id: 'expenses', label: 'Expenses' },
+          { id: 'sales', label: 'Sales' },
+          { id: 'profitability', label: 'Profitability' },
+        ];
+        return (
+          <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+            {tabs.filter((t) => !t.hide).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setWorkspaceTab(t.id)}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                  workspaceTab === t.id
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+
+      {workspaceTab !== 'construction' && (
+        <ProjectWorkspacePanels tab={workspaceTab} projectId={projectId} project={project} />
+      )}
+
+      {workspaceTab === 'construction' && allowStages && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Stage</p>
@@ -371,6 +512,7 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
         </div>
       )}
 
+      {workspaceTab === 'construction' && (
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="font-medium text-slate-800">Construction Stages</h2>
@@ -751,6 +893,7 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
           </div>
         )}
       </div>
+      )}
 
       {showActivityLog && (
         <ProjectActivityLog

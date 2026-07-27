@@ -20,6 +20,7 @@ import SettingsPage from './pages/SettingsPage'
 import GuidePage from './pages/GuidePage'
 import LandPage from './pages/LandPage'
 import { useBodyScrollLock } from './hooks/useBodyScrollLock'
+import type { NavIntent, NavQuickAction } from './types/navIntent'
 
 type Page =
   | 'login' | 'dashboard' | 'projects' | 'project-detail' | 'land'
@@ -91,6 +92,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [navIntent, setNavIntent] = useState<NavIntent>(null)
 
   useBodyScrollLock(drawerOpen)
 
@@ -121,9 +123,36 @@ function App() {
   }, [])
 
   const handleNav = (target: Page) => {
+    setNavIntent(null)
     setPage(target)
     setDrawerOpen(false)
     setError('')
+  }
+
+  const clearNavIntent = () => setNavIntent(null)
+
+  const handleQuickAction = (projectId: string, action: NavQuickAction) => {
+    setNavIntent({ projectId, action })
+    if (action === 'update-stage' || action === 'sell-project') {
+      setSelectedProjectId(projectId)
+      setPage('project-detail')
+      return
+    }
+    if (action === 'issue-material' || action === 'purchase-material') {
+      setPage('inventory')
+      return
+    }
+    if (action === 'add-labour') {
+      setPage('labour')
+      return
+    }
+    if (action === 'record-sale') {
+      setPage('sales')
+      return
+    }
+    if (action === 'view-profit') {
+      setPage('reports')
+    }
   }
 
   const handleLogout = () => {
@@ -154,6 +183,7 @@ function App() {
   }
 
   const handleSelectProject = (id: string) => {
+    setNavIntent(null)
     setSelectedProjectId(id)
     setPage('project-detail')
   }
@@ -285,22 +315,40 @@ function App() {
           )}
 
           {page === 'dashboard' && <DashboardPage />}
-          {page === 'projects' && <ProjectsPage onSelectProject={handleSelectProject} />}
+          {page === 'projects' && (
+            <ProjectsPage
+              onSelectProject={handleSelectProject}
+              onQuickAction={handleQuickAction}
+            />
+          )}
           {page === 'land' && <LandPage />}
           {page === 'project-detail' && selectedProjectId && (
-            <ProjectDetailPage projectId={selectedProjectId} onBack={() => setPage('projects')} />
+            <ProjectDetailPage
+              projectId={selectedProjectId}
+              onBack={() => { setNavIntent(null); setPage('projects') }}
+              initialIntent={navIntent}
+              onIntentConsumed={clearNavIntent}
+            />
           )}
           {page === 'suppliers' && <SuppliersPage />}
-          {page === 'labour' && <LabourPage />}
+          {page === 'labour' && (
+            <LabourPage initialIntent={navIntent} onIntentConsumed={clearNavIntent} />
+          )}
           {page === 'expenses' && <ExpensesPage />}
           {page === 'cashflow' && <CashflowPage />}
           {page === 'procurement' && <ProcurementPage />}
           {page === 'funds' && <FundsPage />}
-          {page === 'sales' && <SalesPage />}
+          {page === 'sales' && (
+            <SalesPage initialIntent={navIntent} onIntentConsumed={clearNavIntent} />
+          )}
           {page === 'accounting' && <AccountingPage />}
           {page === 'users' && <UsersPage />}
-          {page === 'reports' && <ReportsPage />}
-          {page === 'inventory' && <InventoryPage />}
+          {page === 'reports' && (
+            <ReportsPage initialIntent={navIntent} onIntentConsumed={clearNavIntent} />
+          )}
+          {page === 'inventory' && (
+            <InventoryPage initialIntent={navIntent} onIntentConsumed={clearNavIntent} />
+          )}
           {page === 'templates' && <TemplatesPage />}
           {page === 'profile' && <ProfilePage />}
           {page === 'settings' && <SettingsPage />}

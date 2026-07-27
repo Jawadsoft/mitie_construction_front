@@ -357,4 +357,105 @@ export class FundsService implements OnModuleInit {
       return { deleted: true };
     });
   }
+
+  /** Investor / equity capital ledger — committed, received, remaining + receipts. */
+  async getInvestorLedger() {
+    const sources: Array<{
+      id: string;
+      source_name: string;
+      source_type: string;
+      status: string;
+      total_committed: string;
+      received_so_far: string;
+      bank_account_id: string | null;
+      bank_account_name: string | null;
+      bank_name: string | null;
+      project_id: string | null;
+      project_name: string | null;
+    }> = await this.dataSource.query(`
+      SELECT fs.id::text AS id,
+        fs.source_name,
+        fs.source_type,
+        fs.status,
+        fs.total_committed::text AS total_committed,
+        COALESCE(SUM(ft.amount), 0)::text AS received_so_far,
+        fs.bank_account_id::text AS bank_account_id,
+        ba.name AS bank_account_name,
+        ba.bank_name AS bank_name,
+        fs.project_id::text AS project_id,
+        p.name AS project_name
+      FROM fund_sources fs
+      LEFT JOIN fund_transactions ft ON ft.fund_source_id = fs.id
+      LEFT JOIN bank_accounts ba ON ba.id = fs.bank_account_id
+      LEFT JOIN projects p ON p.id = fs.project_id
+      WHERE fs.source_type IN ('INVESTOR', 'EQUITY')
+        AND fs.status != 'Cancelled'
+      GROUP BY fs.id, ba.name, ba.bank_name, p.name
+      ORDER BY fs.source_name ASC
+    `);
+
+    const txs: Array<{
+      id: string;
+      fund_source_id: string;
+      transaction_date: string;
+      amount: string;
+      reference_no: string | null;
+      notes: string | null;
+    }> = await this.dataSource.query(`
+      SELECT ft.id::text AS id,
+        ft.fund_source_id::text AS fund_source_id,
+        ft.transaction_date::text AS transaction_date,
+        ft.amount::text AS amount,
+        ft.reference_no,
+        ft.notes
+      FROM fund_transactions ft
+      JOIN fund_sources fs ON fs.id = ft.fund_source_id
+      WHERE fs.source_type IN ('INVESTOR', 'EQUITY')
+        AND fs.status != 'Cancelled'
+      ORDER BY ft.transaction_date DESC, ft.id DESC
+    `);
+
+    const txBySource = new Map<string, typeof txs>();
+    for (const t of txs) {
+      const list = txBySource.get(t.fund_source_id) || [];
+      list.push(t);
+      txBySource.set(t.fund_source_id, list);
+    }
+
+    const entries = sources.map((s) => {
+      const committed = Number(s.total_committed);
+      const received = Number(s.received_so_far);
+      return {
+        id: s.id,
+        source_name: s.source_name,
+        source_type: s.source_type,
+        status: s.status,
+        committed,
+        received,
+        remaining: Math.max(0, committed - received),
+        bank_account_id: s.bank_account_id,
+        bank_label: [s.bank_name, s.bank_account_name].filter(Boolean).join(' — ') || null,
+        project_id: s.project_id,
+        project_name: s.project_name,
+        transactions: (txBySource.get(s.id) || []).map((t) => ({
+          id: t.id,
+          transaction_date: t.transaction_date,
+          amount: Number(t.amount),
+          reference_no: t.reference_no,
+          notes: t.notes,
+        })),
+      };
+    });
+
+    const total_committed = entries.reduce((s, e) => s + e.committed, 0);
+    const total_received = entries.reduce((s, e) => s + e.received, 0);
+
+    return {
+      total_committed,
+      total_received,
+      available_capital: total_received,
+      remaining_commitments: Math.max(0, total_committed - total_received),
+      entries,
+    };
+  }
 }

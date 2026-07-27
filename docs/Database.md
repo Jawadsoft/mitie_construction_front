@@ -90,6 +90,8 @@ Composite PK: `role_id` + `permission_id` → `roles`, `permissions`.
 | `id` | bigint PK | |
 | `name` | varchar(150) | |
 | `location` | varchar nullable | |
+| `owner_name` | varchar(150) nullable | Project owner / contact (free text) |
+| `manager_name` | varchar(150) nullable | Site / project manager (free text) |
 | `plot_size` | varchar nullable | Legacy free-text; prefer `plot_size_sqft` |
 | `plot_size_sqft` | numeric(14,4) nullable | Canonical plot area in square feet |
 | `project_type` | varchar(50) | `READY_PROPERTY` \| `LAND` (required on create) |
@@ -228,7 +230,7 @@ Append-only movements. `movement_type` varchar (app uses `RECEIPT`, `ISSUE`, `TR
 
 ### `labour_payments`
 
-`contractor_id`, `project_id`, optional stage; `payment_date`, `amount`, `payment_method`; optional `cash_transaction_id`.
+`contractor_id`, `project_id`, optional `project_stage_id` (feeds stage Actual); optional `bank_account_id` → `bank_accounts` (required for Bank Transfer / Cheque); `payment_date`, `amount`, `payment_method`; optional `cash_transaction_id`. Auto JE `LABOUR-{id}`: Dr `5100` / Cr bank or Cash.
 
 ---
 
@@ -272,7 +274,7 @@ Shared cash book. **enum** `type`: `IN`, `OUT`. `amount`, `method`, optional `re
 
 ### `sales`
 
-FK `property_unit_id`, `customer_id`; `sale_date`, `total_sale_price`, `total_paid`; **enum** `status`: `Active`, `Cancelled`, `Completed` (set to `Completed` when fully paid via installment pay or collect).
+FK `property_unit_id`, `customer_id`; `sale_date`, `total_sale_price`, `total_paid`; **enum** `status`: `Active`, `Cancelled`, `Completed` (set to `Completed` when fully paid via installment pay or collect). On create: unit → `Sold`; if the project has zero remaining `Available` units → project `status = Sold` (unless Cancelled / Sold During Construction).
 
 ### `sale_installments`
 

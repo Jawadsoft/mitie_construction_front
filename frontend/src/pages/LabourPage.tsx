@@ -3,19 +3,39 @@ import { getContractors, createContractor, updateContractor, deleteContractor, g
 import type { LabourContractor, LabourAttendance, LabourPayment } from '../api/labour';
 import { exportCSV, exportPDF } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
-import type { Project } from '../api/projects';
+import type { Project, Stage } from '../api/projects';
+import { getBankAccounts } from '../api/accounting';
+import type { BankAccount } from '../api/accounting';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
 import { getAuthHeaders } from '../api/client';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
+import type { NavIntent } from '../types/navIntent';
 
 type Tab = 'contractors' | 'attendance' | 'payments' | 'wages' | 'advances';
+
+function needsBank(method: string) {
+  return /bank|transfer|cheque|check|online/i.test(method || '');
+}
+
+function bankLabel(b: BankAccount) {
+  if (b.bank_name && b.name && b.bank_name.toLowerCase() !== b.name.toLowerCase()) {
+    return `${b.bank_name} — ${b.name}`;
+  }
+  return b.name || b.bank_name || `Bank #${b.id}`;
+}
 
 interface WageRow { contractor_id: string; contractor_name: string; daily_rate: number; total_days: number; gross_wages: number; total_paid: number; advances_given: number; balance_due: number; }
 interface AdvanceRow { id: string; contractor_id: string; project_id: string; advance_date: string; amount: string; recovered_amount: string; notes: string | null; contractor?: LabourContractor; }
 
-export default function LabourPage() {
+export default function LabourPage({
+  initialIntent,
+  onIntentConsumed,
+}: {
+  initialIntent?: NavIntent;
+  onIntentConsumed?: () => void;
+} = {}) {
   const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('contractors');
   const [contractors, setContractors] = useState<LabourContractor[]>([]);
@@ -24,6 +44,8 @@ export default function LabourPage() {
   const [wages, setWages] = useState<WageRow[]>([]);
   const [advances, setAdvances] = useState<AdvanceRow[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [banks, setBanks] = useState<BankAccount[]>([]);
+  const [paymentStages, setPaymentStages] = useState<Stage[]>([]);
   const [filterProject, setFilterProject] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState('');
@@ -55,15 +77,31 @@ export default function LabourPage() {
 
   const emptyContractor = { name: '', contractor_type: '', phone: '', email: '', daily_rate: '' };
   const emptyAttendance = { contractor_id: '', project_id: '', attendance_date: '', present_days: '1', notes: '' };
-  const emptyPayment = { contractor_id: '', project_id: '', payment_date: '', amount: '', payment_method: 'Cash', reference_no: '', notes: '' };
+  const emptyPayment = {
+    contractor_id: '',
+    project_id: '',
+    project_stage_id: '',
+    bank_account_id: '',
+    payment_date: '',
+    amount: '',
+    payment_method: 'Cash',
+    reference_no: '',
+    notes: '',
+  };
   const [contractorForm, setContractorForm] = useState(emptyContractor);
   const [attendanceForm, setAttendanceForm] = useState(emptyAttendance);
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
   const [advanceForm, setAdvanceForm] = useState({ contractor_id: '', project_id: '', advance_date: '', amount: '', reference_no: '', notes: '' });
 
   const loadAll = async () => {
-    const [c, a, p, pr] = await Promise.all([getContractors(), getAttendance(filterProject || undefined), getPayments(filterProject || undefined), getProjects()]);
-    setContractors(c); setAttendance(a); setPayments(p); setProjects(pr);
+    const [c, a, p, pr, b] = await Promise.all([
+      getContractors(),
+      getAttendance(filterProject || undefined),
+      getPayments(filterProject || undefined),
+      getProjects(),
+      getBankAccounts(),
+    ]);
+    setContractors(c); setAttendance(a); setPayments(p); setProjects(pr); setBanks(b);
     // wages
     try {
       const wRes = await fetch(`/api/labour/wages${filterProject ? `?project_id=${filterProject}` : ''}`, { headers: getAuthHeaders() });
@@ -77,6 +115,34 @@ export default function LabourPage() {
   };
 
   useEffect(() => { loadAll().catch(e => setError(e.message)); }, [filterProject]);
+
+  useEffect(() => {
+    if (!paymentForm.project_id) {
+      setPaymentStages([]);
+      return;
+    }
+    const proj = projects.find((p) => p.id === paymentForm.project_id);
+    const stages = (proj?.stages || []).slice().sort((a, b) => a.sequence_order - b.sequence_order);
+    setPaymentStages(stages);
+  }, [paymentForm.project_id, projects]);
+
+  useEffect(() => {
+    if (!initialIntent?.action || initialIntent.action !== 'add-labour' || !initialIntent.projectId) return;
+    const projectId = initialIntent.projectId;
+    setTab('attendance');
+    setFilterProject(projectId);
+    setEditingAttendance(null);
+    setAttendanceForm({
+      contractor_id: '',
+      project_id: projectId,
+      attendance_date: new Date().toISOString().split('T')[0],
+      present_days: '1',
+      notes: '',
+    });
+    setError('');
+    setShowModal(true);
+    onIntentConsumed?.();
+  }, [initialIntent]);
 
   const save = async (fn: () => Promise<any>) => {
     setSaving(true); setError('');
@@ -98,7 +164,17 @@ export default function LabourPage() {
 
   const openEditPayment = (p: LabourPayment) => {
     setEditingPayment(p);
-    setPaymentForm({ contractor_id: p.contractor_id, project_id: p.project_id, payment_date: p.payment_date, amount: p.amount, payment_method: p.payment_method, reference_no: p.reference_no ?? '', notes: p.notes ?? '' });
+    setPaymentForm({
+      contractor_id: p.contractor_id,
+      project_id: p.project_id,
+      project_stage_id: p.project_stage_id ?? '',
+      bank_account_id: p.bank_account_id ?? '',
+      payment_date: p.payment_date,
+      amount: p.amount,
+      payment_method: p.payment_method,
+      reference_no: p.reference_no ?? '',
+      notes: p.notes ?? '',
+    });
     setShowModal(true);
   };
 
@@ -123,11 +199,29 @@ export default function LabourPage() {
   });
 
   const handleSavePayment = () => save(async () => {
-    if (!paymentForm.contractor_id || !paymentForm.project_id || !paymentForm.payment_date || !paymentForm.amount) throw new Error('All required fields must be filled');
+    if (!paymentForm.contractor_id || !paymentForm.project_id || !paymentForm.payment_date || !paymentForm.amount) {
+      throw new Error('All required fields must be filled');
+    }
+    if (needsBank(paymentForm.payment_method) && !paymentForm.bank_account_id) {
+      throw new Error('Bank account is required for bank/cheque payments');
+    }
+    const payload = {
+      contractor_id: paymentForm.contractor_id,
+      project_id: paymentForm.project_id,
+      project_stage_id: paymentForm.project_stage_id || null,
+      bank_account_id: needsBank(paymentForm.payment_method)
+        ? paymentForm.bank_account_id || null
+        : null,
+      payment_date: paymentForm.payment_date,
+      amount: paymentForm.amount,
+      payment_method: paymentForm.payment_method,
+      reference_no: paymentForm.reference_no || null,
+      notes: paymentForm.notes || null,
+    };
     if (editingPayment) {
-      await updatePayment(editingPayment.id, paymentForm);
+      await updatePayment(editingPayment.id, payload);
     } else {
-      await createPayment(paymentForm);
+      await createPayment(payload);
     }
     setEditingPayment(null);
   });
@@ -439,16 +533,51 @@ export default function LabourPage() {
         <Modal title={editingPayment ? 'Edit Payment' : 'Record Payment'} onClose={() => { setShowModal(false); setEditingPayment(null); }}>
           <div className="space-y-3">
             {error && <p className="text-red-600 text-sm">{error}</p>}
-            {[{ l: 'Contractor *', k: 'contractor_id', opts: contractors }, { l: 'Project *', k: 'project_id', opts: projects.map(p => ({ id: p.id, name: p.name })) }].map(f => (
-              <div key={f.k}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{f.l}</label>
-                <select value={(paymentForm as any)[f.k]} onChange={e => setPaymentForm(p => ({ ...p, [f.k]: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm">
-                  <option value="">-- Select --</option>
-                  {f.opts.map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contractor *</label>
+              <select
+                value={paymentForm.contractor_id}
+                onChange={(e) => setPaymentForm((p) => ({ ...p, contractor_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">-- Select --</option>
+                {contractors.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project *</label>
+              <select
+                value={paymentForm.project_id}
+                onChange={(e) => setPaymentForm((p) => ({
+                  ...p,
+                  project_id: e.target.value,
+                  project_stage_id: '',
+                }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">-- Select --</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            {paymentStages.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
+                <select
+                  value={paymentForm.project_stage_id}
+                  onChange={(e) => setPaymentForm((p) => ({ ...p, project_stage_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">-- Optional --</option>
+                  {paymentStages.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
                 </select>
               </div>
-            ))}
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
                 <input type="date" value={paymentForm.payment_date} onChange={e => setPaymentForm(p => ({ ...p, payment_date: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" /></div>
@@ -457,12 +586,35 @@ export default function LabourPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
-                <select value={paymentForm.payment_method} onChange={e => setPaymentForm(p => ({ ...p, payment_method: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm">
+                <select
+                  value={paymentForm.payment_method}
+                  onChange={(e) => setPaymentForm((p) => ({
+                    ...p,
+                    payment_method: e.target.value,
+                    bank_account_id: needsBank(e.target.value) ? p.bank_account_id : '',
+                  }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
                   {['Cash', 'Bank Transfer', 'Cheque'].map(m => <option key={m} value={m}>{m}</option>)}
                 </select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
                 <input value={paymentForm.reference_no} onChange={e => setPaymentForm(p => ({ ...p, reference_no: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" /></div>
             </div>
+            {needsBank(paymentForm.payment_method) && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bank Account *</label>
+                <select
+                  value={paymentForm.bank_account_id}
+                  onChange={(e) => setPaymentForm((p) => ({ ...p, bank_account_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">-- Select bank --</option>
+                  {banks.map((b) => (
+                    <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <button onClick={handleSavePayment} disabled={saving} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm">{saving ? 'Saving...' : editingPayment ? 'Update Payment' : 'Record Payment'}</button>
           </div>
         </Modal>

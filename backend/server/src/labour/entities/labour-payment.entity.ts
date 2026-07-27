@@ -15,6 +15,9 @@ export class LabourPayment {
   @Column({ type: 'bigint', unsigned: true, nullable: true })
   project_stage_id: string | null;
 
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  bank_account_id: string | null;
+
   @Column({ type: 'date' })
   payment_date: string;
 

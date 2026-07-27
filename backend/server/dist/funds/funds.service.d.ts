@@ -32,4 +32,30 @@ export declare class FundsService implements OnModuleInit {
     deleteTransaction(id: string): Promise<{
         deleted: boolean;
     }>;
+    getInvestorLedger(): Promise<{
+        total_committed: number;
+        total_received: number;
+        available_capital: number;
+        remaining_commitments: number;
+        entries: {
+            id: string;
+            source_name: string;
+            source_type: string;
+            status: string;
+            committed: number;
+            received: number;
+            remaining: number;
+            bank_account_id: string | null;
+            bank_label: string | null;
+            project_id: string | null;
+            project_name: string | null;
+            transactions: {
+                id: string;
+                transaction_date: string;
+                amount: number;
+                reference_no: string | null;
+                notes: string | null;
+            }[];
+        }[];
+    }>;
 }

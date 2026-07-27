@@ -100,3 +100,38 @@ export async function deleteFundTransaction(id: string): Promise<void> {
   const res = await fetch(`${BASE}/transactions/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to delete fund transaction');
 }
+
+export interface InvestorLedgerEntry {
+  id: string;
+  source_name: string;
+  source_type: string;
+  status: string;
+  committed: number;
+  received: number;
+  remaining: number;
+  bank_account_id: string | null;
+  bank_label: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  transactions: Array<{
+    id: string;
+    transaction_date: string;
+    amount: number;
+    reference_no: string | null;
+    notes: string | null;
+  }>;
+}
+
+export interface InvestorLedger {
+  total_committed: number;
+  total_received: number;
+  available_capital: number;
+  remaining_commitments: number;
+  entries: InvestorLedgerEntry[];
+}
+
+export async function getInvestorLedger(): Promise<InvestorLedger> {
+  const res = await fetch(`${BASE}/investor-ledger`, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch investor ledger');
+  return res.json();
+}

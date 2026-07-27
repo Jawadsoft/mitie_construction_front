@@ -132,6 +132,7 @@ let LabourService = class LabourService {
             payment_method: payment.payment_method,
             notes: payment.notes,
             contractor_name: contractor?.name ?? null,
+            bank_account_id: payment.bank_account_id,
         }, manager);
     }
     async createPayment(dto) {
@@ -140,12 +141,23 @@ let LabourService = class LabourService {
         }
         if (!(Number(dto.amount) > 0))
             throw new common_1.BadRequestException('amount must be positive');
+        const method = (dto.payment_method || 'Cash').trim();
+        const usesBank = /bank|transfer|cheque|check|online/i.test(method);
+        if (usesBank && !dto.bank_account_id) {
+            throw new common_1.BadRequestException('bank_account_id is required for bank/transfer payments');
+        }
         return this.dataSource.transaction(async (manager) => {
             const repo = manager.getRepository(labour_payment_entity_1.LabourPayment);
             const payment = await repo.save(repo.create({
-                ...dto,
+                contractor_id: dto.contractor_id,
+                project_id: dto.project_id,
+                project_stage_id: dto.project_stage_id || null,
+                bank_account_id: dto.bank_account_id || null,
+                payment_date: dto.payment_date,
                 amount: Number(dto.amount).toFixed(2),
-                payment_method: dto.payment_method || 'Cash',
+                payment_method: method || 'Cash',
+                reference_no: dto.reference_no || null,
+                notes: dto.notes || null,
             }));
             await this.postPaymentJournal(payment, manager);
             return repo.findOne({ where: { id: payment.id }, relations: ['contractor'] });
@@ -191,6 +203,9 @@ let LabourService = class LabourService {
                 ...(dto.project_stage_id !== undefined
                     ? { project_stage_id: dto.project_stage_id || null }
                     : {}),
+                ...(dto.bank_account_id !== undefined
+                    ? { bank_account_id: dto.bank_account_id || null }
+                    : {}),
                 ...(dto.payment_date !== undefined ? { payment_date: dto.payment_date } : {}),
                 amount: nextAmount,
                 ...(dto.payment_method !== undefined ? { payment_method: dto.payment_method } : {}),
@@ -200,6 +215,11 @@ let LabourService = class LabourService {
             const updated = await repo.findOne({ where: { id } });
             if (!updated)
                 throw new common_1.NotFoundException('Payment not found');
+            const method = updated.payment_method || 'Cash';
+            const usesBank = /bank|transfer|cheque|check|online/i.test(method);
+            if (usesBank && !updated.bank_account_id) {
+                throw new common_1.BadRequestException('bank_account_id is required for bank/transfer payments');
+            }
             await this.accounting.deleteJournalByReference(`LABOUR-${id}`, manager);
             await this.postPaymentJournal(updated, manager);
             return repo.findOne({ where: { id }, relations: ['contractor'] });

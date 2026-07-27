@@ -12,7 +12,7 @@ const PHASES = [
       { label: 'Status starts as Committed; updates as money is received' },
       { label: 'Record Receipt each time money hits the partner bank' },
     ],
-    tip: 'Funds is the first step: commit capital, receive into banks, then fund land and projects.',
+    tip: 'Funds is the first step: commit capital, receive into banks, then fund land and projects. Investor Ledger shows INVESTOR/EQUITY committed vs received.',
   },
   {
     phase: '02',
@@ -94,7 +94,7 @@ const PHASES = [
       { label: 'Process weekly/monthly wage payments' },
       { label: 'Track advance payments given' },
     ],
-    tip: 'Labour costs are linked to stages so you see total cost per construction stage.',
+    tip: 'Wage payments update cashflow and project cost. Select a stage so stage Actual includes labour; use Bank for transfer/cheque.',
   },
   {
     phase: '07',
@@ -140,7 +140,7 @@ const PHASES = [
       { label: 'Add installment schedule (monthly / quarterly)' },
       { label: 'Record each payment received — tracks receivables' },
     ],
-    tip: 'Unit status changes to Sold automatically once a sale is recorded.',
+    tip: 'Sale books revenue & receivables immediately; cashflow updates on collection. When the last Available unit is sold, the project status becomes Sold.',
   },
   {
     phase: '10',

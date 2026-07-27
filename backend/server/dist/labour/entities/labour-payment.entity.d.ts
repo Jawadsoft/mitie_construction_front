@@ -4,6 +4,7 @@ export declare class LabourPayment {
     contractor_id: string;
     project_id: string;
     project_stage_id: string | null;
+    bank_account_id: string | null;
     payment_date: string;
     amount: string;
     payment_method: string;

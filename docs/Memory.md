@@ -4,14 +4,17 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## Completed
 
+- Payment reflection: project/stage `total_spent` = expenses + labour_payments + material_issues; labour payments accept `project_stage_id` + `bank_account_id` (JE credits chosen bank); `GET /api/funds/investor-ledger` + Funds Investor Ledger UI; unit sale sets project `Sold` when no Available units remain
+- Project Details workspace: Overview + Financial Summary always visible; tabs for Construction / Funding / Inventory / Procurement / Labour / Expenses / Sales / Profitability; `owner_name` / `manager_name` on projects; Fuel + Finance expense categories
+- Project cards redesign: Completion / Budget / Actual / Profit (Pending until sold_value); strategy quick actions (DEVELOPMENT: Update Stage, Issue/Purchase Material, Add Labour, Sell Project; DIRECT_SALE: Record Sale, View Profit); Upload Document toast (P5); App `navIntent` deep-opens Inventory/Labour/Sales/Reports/Detail
 - Backend Option A cleanup: removed legacy Express package at `backend/` root (`src`, parent `package.json`/`node_modules`); Nest remains sole API in `backend/server` (dropped unused `construction-erp-backend` file:.. dependency)
-- Construction stages: 11-stage DEVELOPMENT template auto-seeded on create; stage `actual_cost` from expenses; Sell Project mid-construction (`POST .../sell-during-construction`) → Sold As-Is + status Sold During Construction + stage lock; statuses include Cancelled
+- Construction stages: 11-stage DEVELOPMENT template auto-seeded on create; stage `actual_cost` from expenses + labour + material issues; Sell Project mid-construction (`POST .../sell-during-construction`) → Sold As-Is + status Sold During Construction + stage lock; statuses include Cancelled
 - Plot size converter: `plot_size_sqft` canonical storage; `PlotSizeField` (size + Gazz/Sq Ft/Marla) with live equivalents; Settings → Measurement Standards (`app_settings`, Pakistan 272.25 or custom Marla); project cards show converted sizes
 - Funds UX polish: Total Committed min PKR 1,000 + comma display + amount-in-words (`utils/money.ts`); Source Name combobox; Add Bank PK bank list (`pakistanBanks` / `PakistanBankNameInput`); + New project on commitment form; opening balance omitted on Funds quick-add bank (defaults 0)
-- Funds-as-first-module: Capital nav; commitment status (Committed / Partial / Fully / Cancelled); KPIs (Pending, Investors, Loan, Owner Capital); Guide + PRD lifecycle updated
+- Funds-as-first-module: Capital nav; commitment status (Committed / Partial / Fully / Cancelled); KPIs (Pending, Investors, Loan, Owner Capital); Investor Ledger; Guide + PRD lifecycle updated
 - Expenses: Direct vs Bill; Pay from partner bank (Bank Transfer/Cheque); bill pay → `EXPPMT-*`; delete cleans EXP/EXPPMT journals
 - Deleting expense / fund receipt / sale now removes matching auto JE (`EXP-*` / `FUND-*` / `SALE-*`+`PMT-*`); Accounting has Delete + Clean orphan JEs
-- Projects: `target_sale_price`; list cards show budget used + sale collections (+ fund receipts when linked); quick +Expense / +Collection (Installment vs Full/Direct via `POST /api/sales/list/:id/collect`) / +Payment on cards
+- Projects: `target_sale_price`; list cards show budget used + sale collections (+ fund receipts when linked); secondary quick +Collection / Activity / Edit / Delete
 - Fund receipts auto-post JE (`FUND-*`) to each bank’s COA sub-account under `1000` Cash & Bank (not the parent alone); banks auto-create children `1001+` on create; opening balance posts `BANK-OPEN-*` (Dr bank / Cr `3000`)
 - Funds: inject sources by partner bank (`bank_account_id` → `bank_accounts`) instead of project; UI bank selector on Funds page
 - Projects form: **Project Strategy** — `project_type` READY_PROPERTY|LAND + `project_subtype` + `project_strategy` DIRECT_SALE|DEVELOPMENT; Direct Sale blocks stages
@@ -33,7 +36,7 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## In Progress
 
-- None (Project Strategy + stage gating shipped)
+- None (Project Details workspace shipped)
 
 **Current focus:** P2 deepen next (multi-level MR approvals) per [Tasks.md](Tasks.md).
 
@@ -44,7 +47,7 @@ Commercial order ([Tasks.md](Tasks.md)):
 1. **P2 deepen** — Multi-level MR approvals / notifications
 2. **P3** — BOQ (Bill of Quantities)
 3. **P4** — Equipment & machinery (registry, fuel, maintenance)
-4. **P5** — Document management (drawings, contracts, NOCs, approvals, photos + blob upload)
+4. **P5** — Document management (drawings, contracts, NOCs, approvals, photos + blob upload) — card **Upload Document** is toast-only until this ships
 
 Parallel (do not block P3+):
 
@@ -53,7 +56,7 @@ Parallel (do not block P3+):
 
 ## Last update
 
-24 July 2026 — Project Strategy (Direct Sale vs Development) + stage gating
+27 July 2026 — Project Details workspace (10-section tabs) + owner/manager fields
 
 ## Session ritual
 

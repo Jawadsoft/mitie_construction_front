@@ -67,16 +67,24 @@ Do not introduce purple gradient themes or decorative glow aesthetics for this p
   1. **Project Type** — Ready Property (`READY_PROPERTY`) or Land (`LAND`)
   2. **Subtype** — filtered list for that type
   3. **Project Strategy** — Direct Sale / Development (Ready Property locked to Direct Sale)
-- Direct Sale projects: Project Detail hides Add Stage / Default Stages and shows an explanatory banner.
+- Direct Sale projects: Project Detail hides Construction tab; Sales/Funding/etc. remain.
+- **Project Detail workspace:** Overview (name, type, strategy, status, location, owner, manager) + Financial Summary (Budget, Actual, Revenue, Expected/Actual Profit) always visible; tabs: Construction | Funding | Inventory | Procurement | Labour | Expenses | Sales | Profitability (`ProjectWorkspacePanels`). Card `navIntent` update-stage / sell-project opens Construction tab.
 - List/cards show type + subtype + strategy badges.
-- Project list cards: progress (budget / collections) plus quick actions **+ Expense**, **+ Collection**, **+ Payment** (`ProjectQuickEntry` modal).
+- Project list cards primary metrics: **Completion**, **Budget**, **Actual** (`total_spent`), **Profit** (Pending until sold_value > 0), plus extras (Target Sale, Sales, budget used %, collections, fund receipts).
+- Common actions: View Details, Add Expense, Add Payment, Upload Document (toast until P5).
+- DEVELOPMENT actions: Update Stage, Issue Material, Add Labour, Purchase Material, Sell Project (via `navIntent`).
+- DIRECT_SALE actions: Record Sale, View Profit.
+- Secondary row: **+ Collection**, Activity Log, Edit, Delete (`ProjectQuickEntry` for expense/collection/payment).
 - **+ Collection** modes: Installment payment vs Full / direct payment (sale picker; amount capped to balance due).
 - Prefer short `placeholder` hints on text/number inputs (name, budget, etc.).
 - **FieldLabel:** form labels include a small **(i)** tip (hover/focus) explaining the field — used on Projects create/edit and Project Detail stage/sell forms.
 - **MoneyInput:** PKR amount fields show en-PK comma grouping while storing digit-only values (`formatMoneyDisplay` / `parseMoneyInput` in `utils/money.ts`). Used for project budget, target sale, stage budgets, and sell-as-is price.
 - **Plot size:** single numeric input + unit selector (Gazz / Sq. Ft / Marla) with live **Equivalent Sizes** panel (`PlotSizeField`). Store only `plot_size_sqft`. Cards show `Plot: X Gazz · Y Sq. Ft · Z Marla` (or legacy free-text if no sqft).
 - **Settings → Measurement Standards:** Pakistan (1 Marla = 272.25 Sq Ft) or Custom Marla→Sq Ft; Gazz fixed at 9 Sq Ft. Above Danger Zone reset UI.
-- **Construction stages (DEVELOPMENT):** 11-stage template; detail timeline shows Budget, Actual Cost (from expenses), dates, completion %. **Sell Project** banner + modal (buyer/price/date) → Sold During Construction / Sold As-Is; stages lock.
+- **Construction stages (DEVELOPMENT):** 11-stage template under Construction tab; timeline shows Budget, Actual Cost (expenses + labour + materials), dates, completion %. **Sell Project** banner + modal (buyer/price/date) → Sold During Construction / Sold As-Is; stages lock.
+- Expense categories include **Fuel** and **Finance** (interest / bank charges) in addition to Land Purchase, Materials, Labour, Equipment Rental, Transport, Utilities, Administration, Other.
+- **Funds → Investor Ledger:** INVESTOR/EQUITY commitments with committed / received / remaining and recent receipts.
+- **Labour payments:** optional Stage select + Bank account when method is Bank Transfer / Cheque.
 
 ## Interaction
 

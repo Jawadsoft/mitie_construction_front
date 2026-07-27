@@ -115,6 +115,7 @@ Per-stage: budget vs actual, labour/material/equipment/overhead, dates, completi
 ### 8. Fund Management
 
 - Owner, investor, loan, and partner capital tracking
+- Investor Ledger (INVESTOR/EQUITY): committed, received, remaining, receipt history
 
 ### 9. Property & Sales Management
 
@@ -230,18 +231,30 @@ Next commercial modules: see [docs/Tasks.md](docs/Tasks.md) **P1–P5**. Narrati
 
 ---
 
+## Payment Reflection
+
+Every money movement writes ops rows and a posted journal; cashflow, balances, and profit are computed on read so modules stay in sync.
+
+| Event | Updates |
+|-------|---------|
+| **Supplier payment / expense** | Cashflow OUT · Supplier AP · Project cost · Stage cost · Profit |
+| **Labour payment** | Cashflow OUT · Labour cost · Stage cost (when stage set) · Project cost · Profit |
+| **Fund received** | Fund received · Cash balance · Available capital · Investor Ledger (INVESTOR/EQUITY) |
+| **Property sale** | Revenue · Receivables · Profit · Project status → Sold when last Available unit sells |
+| **Sale collection** | Cashflow IN · Receivables ↓ · Sale status when fully paid |
+
+**Note:** Creating a sale books revenue and AR immediately; cash moves when installments are collected. Project **Actual / total_spent** = expenses + labour payments + material issues.
+
+---
+
 ## Profit Calculation
 
 ```text
 Profit = Revenue from Sale
-       - Land Cost
-       - Construction Cost
-       - Labour Cost
-       - Supplier Payments
-       - Overhead Costs
-       - Financing Costs
-       - Material Costs
+       − (Expenses + Labour Payments + Material Issues)
 ```
+
+(Reports and project cards use the same cost definition.)
 
 ---
 

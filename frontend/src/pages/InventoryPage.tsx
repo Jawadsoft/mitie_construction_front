@@ -14,6 +14,7 @@ import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDr
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import type { NavIntent } from '../types/navIntent';
 
 type Tab = 'stock' | 'catalog' | 'receive' | 'issues' | 'ledger' | 'utilization';
 
@@ -40,7 +41,13 @@ function fmt(n: number) {
 const UNITS = ['bags', 'kg', 'ton', 'pieces', 'nos', 'ft', 'sft', 'rft', 'liter', 'gallon', 'cubic ft', 'cubic m', 'set', 'rolls', 'sheets', 'bundle'];
 const CATEGORIES = ['Cement & Binding', 'Steel & Iron', 'Bricks & Blocks', 'Sand & Aggregate', 'Timber & Wood', 'Electrical', 'Plumbing', 'Finishing', 'Hardware', 'Safety', 'Tools & Equipment', 'Other'];
 
-export default function InventoryPage() {
+export default function InventoryPage({
+  initialIntent,
+  onIntentConsumed,
+}: {
+  initialIntent?: NavIntent;
+  onIntentConsumed?: () => void;
+} = {}) {
   const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('stock');
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -121,6 +128,30 @@ export default function InventoryPage() {
   useEffect(() => { if (tab === 'ledger') loadLedger(); }, [tab, filterProject]);
   useEffect(() => { if (tab === 'issues') loadIssues(); }, [tab, filterProject]);
   useEffect(() => { if (tab === 'utilization') loadUtilization(); }, [utilProject]);
+
+  useEffect(() => {
+    if (!initialIntent?.action || !initialIntent.projectId) return;
+    const projectId = initialIntent.projectId;
+    if (initialIntent.action === 'issue-material') {
+      setIssueForm((f) => ({
+        ...f,
+        project_id: projectId,
+        issue_date: f.issue_date || new Date().toISOString().split('T')[0],
+      }));
+      setShowModal('issue');
+      onIntentConsumed?.();
+      return;
+    }
+    if (initialIntent.action === 'purchase-material') {
+      setDpHeader((h) => ({
+        ...h,
+        project_id: projectId,
+        purchase_date: h.purchase_date || new Date().toISOString().split('T')[0],
+      }));
+      setShowDirectPurchase(true);
+      onIntentConsumed?.();
+    }
+  }, [initialIntent]);
 
   // Load stages when issue project changes
   useEffect(() => {

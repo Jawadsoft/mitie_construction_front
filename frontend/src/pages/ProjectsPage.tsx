@@ -24,6 +24,7 @@ import { notify, notifyError } from '../utils/toast';
 import { formatPlotEquivalents, PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
 import { getMeasurementSettings } from '../api/settings';
 import { parseMoneyInput } from '../utils/money';
+import type { NavQuickAction } from '../types/navIntent';
 
 function moneyDigits(raw: string | number | null | undefined): string {
   if (raw == null || raw === '') return '';
@@ -55,6 +56,8 @@ const STATUSES = [
 type ProjectFormState = {
   name: string;
   location: string;
+  owner_name: string;
+  manager_name: string;
   project_type: ProjectTypeCode;
   project_subtype: ProjectSubtype;
   project_strategy: ProjectStrategy;
@@ -69,6 +72,8 @@ type ProjectFormState = {
 const emptyForm = (): ProjectFormState => ({
   name: '',
   location: '',
+  owner_name: '',
+  manager_name: '',
   project_type: 'READY_PROPERTY',
   project_subtype: 'ALREADY_CONSTRUCTED_HOUSE',
   project_strategy: 'DIRECT_SALE',
@@ -97,6 +102,8 @@ function formFromProject(p: Project): ProjectFormState {
   return {
     name: p.name,
     location: p.location ?? '',
+    owner_name: p.owner_name ?? '',
+    manager_name: p.manager_name ?? '',
     project_type: type,
     project_subtype: subtype,
     project_strategy: strategy,
@@ -201,9 +208,10 @@ function TaxonomyFields({
 
 interface Props {
   onSelectProject: (id: string) => void;
+  onQuickAction: (projectId: string, action: NavQuickAction) => void;
 }
 
-export default function ProjectsPage({ onSelectProject }: Props) {
+export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) {
   const confirm = useConfirm();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -250,6 +258,8 @@ export default function ProjectsPage({ onSelectProject }: Props) {
       const payload: Partial<Project> = {
         name: editForm.name,
         location: editForm.location,
+        owner_name: editForm.owner_name || null,
+        manager_name: editForm.manager_name || null,
         project_type: editForm.project_type,
         project_subtype: editForm.project_subtype,
         project_strategy: editForm.project_type === 'READY_PROPERTY' ? 'DIRECT_SALE' : editForm.project_strategy,
@@ -280,6 +290,8 @@ export default function ProjectsPage({ onSelectProject }: Props) {
       const payload: Partial<Project> = {
         name: form.name,
         location: form.location,
+        owner_name: form.owner_name || null,
+        manager_name: form.manager_name || null,
         project_type: form.project_type,
         project_subtype: form.project_subtype,
         project_strategy: form.project_type === 'READY_PROPERTY' ? 'DIRECT_SALE' : form.project_strategy,
@@ -378,6 +390,30 @@ export default function ProjectsPage({ onSelectProject }: Props) {
               <PakistanLocationInput
                 value={form.location}
                 onChange={(location) => setForm((f) => ({ ...f, location }))}
+              />
+            </div>
+            <div>
+              <FieldLabel info="Project owner or investor contact name (optional).">
+                Owner
+              </FieldLabel>
+              <input
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                value={form.owner_name}
+                onChange={(e) => setForm((f) => ({ ...f, owner_name: e.target.value }))}
+                placeholder="e.g. Ahmed Khan"
+                disabled={saving}
+              />
+            </div>
+            <div>
+              <FieldLabel info="Site or project manager name (optional).">
+                Manager
+              </FieldLabel>
+              <input
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                value={form.manager_name}
+                onChange={(e) => setForm((f) => ({ ...f, manager_name: e.target.value }))}
+                placeholder="e.g. Site Engineer"
+                disabled={saving}
               />
             </div>
             <TaxonomyFields form={form} setForm={setForm} namePrefix="create" />
@@ -498,151 +534,244 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                 if (p.plot_size) return <p className="text-xs text-slate-600">Plot: {p.plot_size}</p>;
                 return null;
               })()}
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <p className="text-slate-400">Budget</p>
-                  <p className="font-medium">
-                    {p.total_estimated_budget
-                      ? `PKR ${Number(p.total_estimated_budget).toLocaleString()}`
-                      : '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Target Sale</p>
-                  <p className="font-medium">
-                    {p.target_sale_price
-                      ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
-                      : '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Expenses</p>
-                  <p className="font-medium text-red-700">
-                    PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Sales</p>
-                  <p className="font-medium text-green-700">
-                    PKR {Number(p.computed?.sold_value ?? 0).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-              <div className="flex justify-between items-center text-xs rounded bg-slate-50 px-2 py-1.5">
-                <span className="text-slate-500">Profitability</span>
-                <span
-                  className={`font-semibold font-mono ${
-                    Number(p.computed?.profit ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'
-                  }`}
-                >
-                  PKR {Number(p.computed?.profit ?? 0).toLocaleString()}
-                  {Number(p.computed?.sold_value ?? 0) > 0 && (
-                    <span className="text-slate-400 font-normal ml-1">
-                      ({p.computed?.profit_margin_pct ?? 0}%)
-                    </span>
-                  )}
-                </span>
-              </div>
-              {Number(p.computed?.total_collected ?? 0) > 0 && (
-                <p className="text-xs text-slate-500">
-                  Collected: PKR {Number(p.computed?.total_collected).toLocaleString()}
-                </p>
-              )}
-              {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400">Budget used</span>
-                    <span className="font-medium">{p.computed?.budget_used_pct ?? 0}%</span>
-                  </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-500 rounded-full transition-all"
-                      style={{ width: `${p.computed?.budget_used_pct ?? 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {(Number(p.target_sale_price) > 0 || Number(p.computed?.total_collected) > 0) && (
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400">Sale collections</span>
-                    <span className="font-medium">{p.computed?.collection_pct ?? 0}%</span>
-                  </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-green-600 rounded-full transition-all"
-                      style={{ width: `${p.computed?.collection_pct ?? 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {Number(p.computed?.fund_receipts) > 0 && (
-                <p className="text-xs text-slate-500">
-                  Fund receipts: PKR {Number(p.computed?.fund_receipts).toLocaleString()}
-                </p>
-              )}
-              {p.computed && p.computed.stage_count > 0 && (
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400">Stage completion</span>
-                    <span className="font-medium">{p.computed.avg_completion_percent}%</span>
-                  </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-slate-900 rounded-full transition-all"
-                      style={{ width: `${p.computed.avg_completion_percent}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <button
-                  type="button"
-                  className="text-xs rounded border border-red-200 text-red-700 px-2 py-1 hover:bg-red-50"
-                  onClick={() => setQuickEntry({ project: p, kind: 'expense' })}
-                >
-                  + Expense
-                </button>
-                <button
-                  type="button"
-                  className="text-xs rounded border border-green-200 text-green-700 px-2 py-1 hover:bg-green-50"
-                  onClick={() => setQuickEntry({ project: p, kind: 'collection' })}
-                >
-                  + Collection
-                </button>
-                <button
-                  type="button"
-                  className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50"
-                  onClick={() => setQuickEntry({ project: p, kind: 'payment' })}
-                >
-                  + Payment
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button className="flex-1 text-xs rounded border border-slate-300 py-1.5 hover:bg-slate-50" onClick={() => onSelectProject(p.id)}>View Details</button>
-                <button
-                  type="button"
-                  className="text-xs rounded border border-violet-200 text-violet-700 px-3 py-1.5 hover:bg-violet-50"
-                  onClick={() => setActivityProject(p)}
-                >
-                  Activity Log
-                </button>
-                <button
-                  className="text-xs rounded border border-blue-200 text-blue-600 px-3 py-1.5 hover:bg-blue-50 disabled:opacity-50"
-                  disabled={!!deletingId}
-                  onClick={() => openEdit(p)}
-                >
-                  Edit
-                </button>
-                <button
-                  className="text-xs rounded border border-red-200 text-red-600 px-3 py-1.5 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
-                  disabled={!!deletingId}
-                  onClick={() => handleDelete(p.id, p.name)}
-                >
-                  {deletingId === p.id && <span className="h-3 w-3 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />}
-                  {deletingId === p.id ? 'Deleting…' : 'Delete'}
-                </button>
-              </div>
+              {(() => {
+                const completion = Number(p.computed?.avg_completion_percent ?? 0);
+                const soldValue = Number(p.computed?.sold_value ?? 0);
+                const profitPending = soldValue <= 0;
+                const strategy = normalizeProjectFields(p).project_strategy;
+                const canSell =
+                  strategy === 'DEVELOPMENT' &&
+                  !['Sold', 'Sold During Construction', 'Cancelled', 'Completed'].includes(p.status);
+                return (
+                  <>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-400">Completion</span>
+                        <span className="font-medium">{completion}%</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-slate-900 rounded-full transition-all"
+                          style={{ width: `${Math.min(100, Math.max(0, completion))}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <p className="text-slate-400">Budget</p>
+                        <p className="font-medium">
+                          {p.total_estimated_budget
+                            ? `PKR ${Number(p.total_estimated_budget).toLocaleString()}`
+                            : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Actual</p>
+                        <p className="font-medium text-red-700">
+                          PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Target Sale</p>
+                        <p className="font-medium">
+                          {p.target_sale_price
+                            ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
+                            : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Sales</p>
+                        <p className="font-medium text-green-700">
+                          PKR {soldValue.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-xs rounded bg-slate-50 px-2 py-1.5">
+                      <span className="text-slate-500">Profit</span>
+                      {profitPending ? (
+                        <span className="font-semibold text-amber-700">Pending</span>
+                      ) : (
+                        <span
+                          className={`font-semibold font-mono ${
+                            Number(p.computed?.profit ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'
+                          }`}
+                        >
+                          PKR {Number(p.computed?.profit ?? 0).toLocaleString()}
+                          <span className="text-slate-400 font-normal ml-1">
+                            ({p.computed?.profit_margin_pct ?? 0}%)
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                    {Number(p.computed?.total_collected ?? 0) > 0 && (
+                      <p className="text-xs text-slate-500">
+                        Collected: PKR {Number(p.computed?.total_collected).toLocaleString()}
+                      </p>
+                    )}
+                    {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-slate-400">Budget used</span>
+                          <span className="font-medium">{p.computed?.budget_used_pct ?? 0}%</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-amber-500 rounded-full transition-all"
+                            style={{ width: `${p.computed?.budget_used_pct ?? 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {(Number(p.target_sale_price) > 0 || Number(p.computed?.total_collected) > 0) && (
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-slate-400">Sale collections</span>
+                          <span className="font-medium">{p.computed?.collection_pct ?? 0}%</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-green-600 rounded-full transition-all"
+                            style={{ width: `${p.computed?.collection_pct ?? 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {Number(p.computed?.fund_receipts) > 0 && (
+                      <p className="text-xs text-slate-500">
+                        Fund receipts: PKR {Number(p.computed?.fund_receipts).toLocaleString()}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50"
+                        onClick={() => onSelectProject(p.id)}
+                      >
+                        View Details
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-red-200 text-red-700 px-2 py-1 hover:bg-red-50"
+                        onClick={() => setQuickEntry({ project: p, kind: 'expense' })}
+                      >
+                        Add Expense
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50"
+                        onClick={() => setQuickEntry({ project: p, kind: 'payment' })}
+                      >
+                        Add Payment
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-sky-200 text-sky-700 px-2 py-1 hover:bg-sky-50"
+                        onClick={() => notify.info('Document upload coming soon')}
+                      >
+                        Upload Document
+                      </button>
+                    </div>
+
+                    {strategy === 'DEVELOPMENT' && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-indigo-200 text-indigo-700 px-2 py-1 hover:bg-indigo-50"
+                          onClick={() => onQuickAction(p.id, 'update-stage')}
+                        >
+                          Update Stage
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-orange-200 text-orange-700 px-2 py-1 hover:bg-orange-50"
+                          onClick={() => onQuickAction(p.id, 'issue-material')}
+                        >
+                          Issue Material
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-teal-200 text-teal-700 px-2 py-1 hover:bg-teal-50"
+                          onClick={() => onQuickAction(p.id, 'add-labour')}
+                        >
+                          Add Labour
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-amber-200 text-amber-800 px-2 py-1 hover:bg-amber-50"
+                          onClick={() => onQuickAction(p.id, 'purchase-material')}
+                        >
+                          Purchase Material
+                        </button>
+                        {canSell && (
+                          <button
+                            type="button"
+                            className="text-xs rounded border border-purple-200 text-purple-700 px-2 py-1 hover:bg-purple-50"
+                            onClick={() => onQuickAction(p.id, 'sell-project')}
+                          >
+                            Sell Project
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {strategy === 'DIRECT_SALE' && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-emerald-200 text-emerald-700 px-2 py-1 hover:bg-emerald-50"
+                          onClick={() => onQuickAction(p.id, 'record-sale')}
+                        >
+                          Record Sale
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs rounded border border-blue-200 text-blue-700 px-2 py-1 hover:bg-blue-50"
+                          onClick={() => onQuickAction(p.id, 'view-profit')}
+                        >
+                          View Profit
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-green-200 text-green-700 px-2 py-1 hover:bg-green-50"
+                        onClick={() => setQuickEntry({ project: p, kind: 'collection' })}
+                      >
+                        + Collection
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-violet-200 text-violet-700 px-2 py-1 hover:bg-violet-50"
+                        onClick={() => setActivityProject(p)}
+                      >
+                        Activity Log
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-blue-200 text-blue-600 px-2 py-1 hover:bg-blue-50 disabled:opacity-50"
+                        disabled={!!deletingId}
+                        onClick={() => openEdit(p)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs rounded border border-red-200 text-red-600 px-2 py-1 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+                        disabled={!!deletingId}
+                        onClick={() => handleDelete(p.id, p.name)}
+                      >
+                        {deletingId === p.id && (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />
+                        )}
+                        {deletingId === p.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -672,6 +801,28 @@ export default function ProjectsPage({ onSelectProject }: Props) {
                 <PakistanLocationInput
                   value={editForm.location}
                   onChange={(location) => setEditForm((prev) => ({ ...prev, location }))}
+                />
+              </div>
+              <div>
+                <FieldLabel info="Project owner or investor contact name (optional).">
+                  Owner
+                </FieldLabel>
+                <input
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.owner_name}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, owner_name: e.target.value }))}
+                  disabled={saving}
+                />
+              </div>
+              <div>
+                <FieldLabel info="Site or project manager name (optional).">
+                  Manager
+                </FieldLabel>
+                <input
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={editForm.manager_name}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, manager_name: e.target.value }))}
+                  disabled={saving}
                 />
               </div>
               <TaxonomyFields form={editForm} setForm={setEditForm} namePrefix="edit" />

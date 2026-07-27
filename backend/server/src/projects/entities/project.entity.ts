@@ -9,8 +9,14 @@ export class Project {
   @Column({ type: 'varchar', length: 150 })
   name: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 150, nullable: true })
   location: string | null;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  owner_name: string | null;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  manager_name: string | null;
 
   /** Legacy free-text; prefer plot_size_sqft for new data */
   @Column({ type: 'varchar', length: 100, nullable: true })

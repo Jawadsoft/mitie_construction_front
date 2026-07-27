@@ -910,7 +910,7 @@ let AccountingService = class AccountingService {
     }
     async postLabourPaymentJournal(payment, manager) {
         const labourAcc = await this.findAccountByCode('5100', manager);
-        const cashId = await this.resolveBankAssetAccountId(null, manager);
+        const cashId = await this.resolveBankAssetAccountId(payment.bank_account_id, manager);
         const amount = Number(payment.amount).toFixed(2);
         const who = payment.contractor_name || `contractor ${payment.contractor_id}`;
         return this.createAndPostEntry({
