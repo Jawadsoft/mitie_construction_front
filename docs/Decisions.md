@@ -18,8 +18,7 @@ Locked choices for **this** repository. Agents and contributors must follow thes
 ```text
 mitie_construction_front/
 ├── frontend/          # React + Vite SPA (active UI)
-├── backend/server/    # NestJS API (active backend)
-├── backend/src/       # Legacy Express sketch — not the active API
+├── backend/server/    # NestJS API (active backend) — only Node package under backend/
 ├── backend/db/        # SQL seeds / reference (prefer *.pg.sql for Postgres)
 └── docs/              # Project documentation
 ```
@@ -33,7 +32,7 @@ Leave historical root docs [`scope.md`](../scope.md) and [`development-plan.md`]
 | Next.js App Router (API routes / RSC rewrite) | **Rejected** | UI is a Vite SPA; API is Nest — do not migrate to Next |
 | Prisma (`prisma/` schema + migrations as primary) | **Rejected** | Schema is TypeORM entities; do not introduce Prisma as source of truth |
 | MySQL as primary DB for Nest | **Rejected** | Active path is PostgreSQL (Render + local) |
-| Express under `backend/src` as active API | **Rejected** | Keep for reference only; all new endpoints go in Nest |
+| Express under `backend/src` as a second API | **Removed** | Parent Express package deleted (Option A); sole API is Nest in `backend/server` |
 | Generic “tasks” table for project work | **Rejected** | Work breakdown is `project_stages` (+ budgets/progress) |
 
 ## Product decisions

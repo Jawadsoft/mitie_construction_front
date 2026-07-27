@@ -4,6 +4,7 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## Completed
 
+- Backend Option A cleanup: removed legacy Express package at `backend/` root (`src`, parent `package.json`/`node_modules`); Nest remains sole API in `backend/server` (dropped unused `construction-erp-backend` file:.. dependency)
 - Construction stages: 11-stage DEVELOPMENT template auto-seeded on create; stage `actual_cost` from expenses; Sell Project mid-construction (`POST .../sell-during-construction`) → Sold As-Is + status Sold During Construction + stage lock; statuses include Cancelled
 - Plot size converter: `plot_size_sqft` canonical storage; `PlotSizeField` (size + Gazz/Sq Ft/Marla) with live equivalents; Settings → Measurement Standards (`app_settings`, Pakistan 272.25 or custom Marla); project cards show converted sizes
 - Funds UX polish: Total Committed min PKR 1,000 + comma display + amount-in-words (`utils/money.ts`); Source Name combobox; Add Bank PK bank list (`pakistanBanks` / `PakistanBankNameInput`); + New project on commitment form; opening balance omitted on Funds quick-add bank (defaults 0)

@@ -21,7 +21,8 @@ Standards for the Construction ERP repo (`frontend/` + `backend/server/`). Also 
 - Duplicating page/API logic—extend shared `api/` helpers and components
 - Inventing endpoints, env vars, or columns that are not in the codebase
 - Committing `.env`, secrets, or `node_modules`
-- Relying on legacy Express (`backend/src`) or MySQL SQL for new features
+- Adding a second backend package under `backend/` — API is Nest under `backend/server` only
+- Using MySQL SQL scripts as the source of truth for new schema (prefer TypeORM entities + Postgres)
 - Hardcoding production URLs or credentials
 
 ## Naming

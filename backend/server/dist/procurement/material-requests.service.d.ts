@@ -1,0 +1,161 @@
+import { Repository } from 'typeorm';
+import { MaterialRequest } from './entities/material-request.entity';
+import { MaterialRequestItem } from './entities/material-request-item.entity';
+import { PurchaseOrder } from './entities/purchase-order.entity';
+import { PoItem } from './entities/po-item.entity';
+export declare class MaterialRequestsService {
+    private readonly mrRepo;
+    private readonly itemRepo;
+    private readonly poRepo;
+    private readonly poItemRepo;
+    constructor(mrRepo: Repository<MaterialRequest>, itemRepo: Repository<MaterialRequestItem>, poRepo: Repository<PurchaseOrder>, poItemRepo: Repository<PoItem>);
+    private nextRequestNo;
+    findAll(filters: {
+        project_id?: string;
+        status?: string;
+    }): Promise<MaterialRequest[]>;
+    findOne(id: string): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    create(dto: {
+        request: Partial<MaterialRequest>;
+        items: Partial<MaterialRequestItem>[];
+    }): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    update(id: string, dto: Partial<MaterialRequest>): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    submit(id: string): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    approve(id: string, dto: {
+        approved_by: string;
+        items?: {
+            id: string;
+            quantity_approved: string;
+        }[];
+    }): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    reject(id: string, dto: {
+        approved_by: string;
+        rejection_reason?: string;
+    }): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+    convertToPo(id: string, dto: {
+        supplier_id: string;
+        created_by?: string;
+        order_date?: string;
+        expected_delivery?: string;
+        notes?: string;
+    }): Promise<{
+        items: MaterialRequestItem[];
+        id: string;
+        request_no: string;
+        project_id: string;
+        project_stage_id: string | null;
+        requested_by: string;
+        request_date: string;
+        needed_by_date: string | null;
+        status: string;
+        approved_by: string | null;
+        approved_at: Date | null;
+        rejection_reason: string | null;
+        notes: string | null;
+        purchase_order_id: string | null;
+        created_at: Date;
+        updated_at: Date;
+    }>;
+}

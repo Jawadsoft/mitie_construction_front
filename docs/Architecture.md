@@ -10,7 +10,7 @@
 | Auth | JWT; token stored in `localStorage` on the client |
 | Deploy | Render (`render.yaml`, rootDir `backend/server`) |
 
-**Legacy (not the active path):** Express + MySQL sketch under `backend/src/` and most MySQL-oriented SQL under `backend/db/`. Prefer Nest + Postgres. Mock projects seed for Postgres: `backend/db/seed-mock-projects.pg.sql`.
+**SQL reference:** Most files under `backend/db/` are MySQL-oriented. Prefer Nest + Postgres entities for schema. Mock projects seed for Postgres: `backend/db/seed-mock-projects.pg.sql`.
 
 ## Frontend structure
 
@@ -33,8 +33,7 @@ Vite dev server: `http://localhost:5173`. API calls use relative `/api` (or `VIT
 
 ```text
 backend/
-├── package.json             # Proxies npm scripts to server/
-├── server/                  # NestJS app (active)
+├── server/                  # NestJS app (active) — sole npm package for the API
 │   ├── src/
 │   │   ├── main.ts          # dotenv/config, listen PORT
 │   │   ├── app.module.ts
@@ -55,7 +54,6 @@ backend/
 │   │   └── health/
 │   ├── .env / .env.example
 │   └── package.json
-├── src/                     # Legacy Express (optional)
 └── db/                      # SQL seeds / reference schema
 ```
 

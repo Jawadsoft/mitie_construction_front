@@ -28,7 +28,7 @@ Land Purchase → Construction Stages → Supplier & Labour Payments → Cashflo
 | **Database** | PostgreSQL |
 | **Deployment** | Render (`render.yaml`) |
 
-> Note: `backend/src` still contains an older Express + MySQL sketch, and most `backend/db/*.sql` files are MySQL-oriented. Use [`backend/db/seed-mock-projects.pg.sql`](backend/db/seed-mock-projects.pg.sql) for Postgres mock projects. The running API is **NestJS** under `backend/server` with **PostgreSQL**.
+> Note: The API root is **NestJS** under [`backend/server`](backend/server) with **PostgreSQL**. Most files under [`backend/db`](backend/db) are MySQL-oriented reference SQL; use [`backend/db/seed-mock-projects.pg.sql`](backend/db/seed-mock-projects.pg.sql) for Postgres mock projects.
 
 ---
 
@@ -43,13 +43,11 @@ mitie_construction_front/
 │   ├── vite.config.ts        # Proxies /api → http://localhost:4000
 │   └── tailwind.config.js
 ├── backend/
-│   ├── server/               # NestJS API (active)
+│   ├── server/               # NestJS API (active) — npm install / start:dev here
 │   │   ├── src/              # Modules: auth, users, projects, inventory, etc.
 │   │   ├── package.json
 │   │   └── nest-cli.json
-│   ├── src/                  # Legacy Express entry (optional)
-│   ├── db/                   # Reference SQL / seed scripts
-│   └── package.json          # Proxies npm scripts to backend/server
+│   └── db/                   # Reference SQL / seed scripts
 ├── docs/                     # PRD, architecture, API, database, tasks, …
 ├── development-plan.md       # Historical checklist (root)
 ├── scope.md                  # Detailed scope (root)
@@ -189,12 +187,12 @@ Use your real `DB_PORT` if it is not `5432`. Project names are prefixed with `[M
 ### Backend setup
 
 ```bash
-cd backend
+cd backend/server
 npm install
-npm run dev
+npm run start:dev
 ```
 
-`npm run dev` starts NestJS in watch mode (`backend/server`). API defaults to **http://localhost:4000**.
+NestJS runs in watch mode. API defaults to **http://localhost:4000**.
 
 Optional health check: `GET http://localhost:4000/api/health` (or the health route exposed by the Nest health module).
 
@@ -216,9 +214,9 @@ Vite serves the UI at **http://localhost:5173** and proxies `/api` to `http://lo
 | `frontend/` | `npm run build` | Production build |
 | `frontend/` | `npm run preview` | Preview production build |
 | `frontend/` | `npm run lint` | ESLint |
-| `backend/` | `npm run dev` | NestJS watch mode |
-| `backend/` | `npm run build` | Install + build NestJS |
-| `backend/` | `npm start` | Production start (`start:prod`) |
+| `backend/server/` | `npm run start:dev` | NestJS watch mode |
+| `backend/server/` | `npm run build` | Compile NestJS |
+| `backend/server/` | `npm start` / `npm run start:prod` | Production start |
 
 ---
 
