@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { globalSearch, type GlobalSearchResult, type SearchHit } from '../api/search';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
@@ -51,7 +51,7 @@ export default function GlobalSearch() {
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setOpen(true);
@@ -75,7 +75,7 @@ export default function GlobalSearch() {
 
   useEffect(() => {
     if (!open) return;
-    const onEsc = (e: KeyboardEvent) => {
+    const onEsc = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
@@ -126,7 +126,7 @@ export default function GlobalSearch() {
     close();
   };
 
-  const onInputKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onInputKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveIdx((i) => Math.min(i + 1, Math.max(flat.length - 1, 0)));

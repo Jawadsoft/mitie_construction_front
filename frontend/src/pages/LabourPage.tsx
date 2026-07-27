@@ -132,7 +132,7 @@ export default function LabourPage({
     if (!initialIntent?.action || initialIntent.action !== 'add-labour' || !initialIntent.projectId) return;
     const projectId = initialIntent.projectId;
     setTab('attendance');
-    setFilterProject(projectId);
+    setFilter('project', projectId);
     setEditingAttendance(null);
     setAttendanceForm({
       contractor_id: '',

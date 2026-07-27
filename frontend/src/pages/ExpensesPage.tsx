@@ -222,6 +222,7 @@ export default function ExpensesPage() {
           paid_amount: form.entry_mode === 'BILL' ? '0' : form.amount,
           status: form.entry_mode === 'BILL' ? 'Unpaid' : 'Paid',
           description: form.description || null,
+          created_at: new Date().toISOString(),
         };
         setExpenses((prev) => [optimistic, ...prev]);
         setShowModal(false);
