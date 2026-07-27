@@ -31,6 +31,7 @@ import type { NavQuickAction } from '../types/navIntent';
 import { useListFilters } from '../utils/navState';
 import { useColumnPrefs } from '../utils/columnPrefs';
 import { useFormDraft, peekFormDraft, clearFormDraft } from '../hooks/useFormDraft';
+import { isFormDirty } from '../hooks/useDirtyForm';
 import { CardSkeleton, TableSkeleton } from '../components/Skeleton';
 import { useEditLock } from '../hooks/useEditLock';
 

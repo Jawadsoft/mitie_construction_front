@@ -17,17 +17,20 @@
 ```text
 frontend/
 ├── src/
-│   ├── App.tsx              # Shell, nav, login, page switcher
+│   ├── App.tsx              # HashRouter shell, nav, ShortcutsProvider, login
 │   ├── main.tsx
 │   ├── api/                 # fetch wrappers (/api/*)
-│   ├── components/          # Modal, StatCard, DetailDrawer, …
+│   ├── components/          # Modal, DetailDrawer, GlobalSearch, NotificationCenter, Skeleton, …
+│   ├── hooks/               # useListFilters, useFormDraft, useDirtyForm, useEditLock, …
 │   ├── pages/               # Feature screens (*Page.tsx)
-│   └── utils/
+│   └── utils/               # navHistory, navState, columnPrefs, money, …
 ├── vite.config.ts           # Proxies /api → http://localhost:4000
 └── package.json
 ```
 
 Vite dev server: `http://localhost:5173`. API calls use relative `/api` (or `VITE_API_URL`).
+
+**Routing:** `HashRouter` (`#/projects`, `#/projects/:id?tab=&stage=`). Client prefs in `localStorage` (`erp.filters.*`, `erp.columns.*`, `erp.draft.*`, `erp.lastRoute`, `erp.notifications.readIds`). Multi-tab edit locks via `BroadcastChannel('erp-edit-locks')`.
 
 ## Backend structure
 
@@ -39,7 +42,7 @@ backend/
 │   │   ├── app.module.ts
 │   │   ├── auth/
 │   │   ├── users/
-│   │   ├── projects/
+│   │   ├── projects/        # soft-delete, activity timeline, sell-during-construction
 │   │   ├── land/
 │   │   ├── procurement/     # POs + material requests
 │   │   ├── inventory/
@@ -50,6 +53,8 @@ backend/
 │   │   ├── sales/
 │   │   ├── accounting/
 │   │   ├── reports/
+│   │   ├── search/          # GET /api/search (global)
+│   │   ├── notifications/   # GET /api/notifications/summary (computed; no table)
 │   │   ├── settings/
 │   │   └── health/
 │   ├── .env / .env.example
@@ -140,9 +145,9 @@ flowchart LR
 **Sale collections**
 
 - Single installment: `POST /api/sales/installments/:id/pay`
-- Full/direct on a sale: `POST /api/sales/list/:id/collect` — applies amount FIFO to open installments by `due_date`; if money remains and the sale still has balance, creates a catch-up installment and pays it in the same transaction. Rejects amounts above sale balance due. Project cards expose both modes via **+ Collection**.
+- Full/direct on a sale: `POST /api/sales/list/:id/collect` — applies amount FIFO to open installments by `due_date`; if money remains and the sale still has balance, creates a catch-up installment and pays it in the same transaction. Rejects amounts above sale balance due. Project cards expose both modes via **Collection**.
 
-**Nav intent:** Project card strategy actions set `navIntent` in `App.tsx` so Inventory / Labour / Sales / Reports / Project Detail open with the project prefilled (and the matching modal when applicable).
+**Nav intent:** Project card actions set `navIntent` in `App.tsx` so Inventory / Labour / Sales / Reports / Project Detail open with the project prefilled (and the matching modal when applicable).
 
 ## Project type and strategy
 
@@ -190,6 +195,10 @@ erDiagram
 - Frontend clients in `frontend/src/api/*.ts` use `getAuthHeaders()` for Bearer token
 - Accounting **writes** enforce JWT + roles (`Admin`, `Owner / Director`, `Accountant`); other modules still soft on guards
 - Prefer proper HTTP status codes and explicit error messages
+- **Search** (`search/`): `GET /api/search?q=` — cross-entity hits for Ctrl+K
+- **Notifications** (`notifications/`): `GET /api/notifications/summary` — computed alerts (low stock, budget, MR pending, overdue installments); no notifications table
+- **Projects lifecycle:** list `?lifecycle=active|archived|deleted`; `DELETE` soft-sets `deleted_at`; `POST .../restore` clears it; `GET .../activity` timeline
+- **Audit actors:** JWT user id written to `created_by` / `updated_by` on projects & expenses; JE post sets `posted_by` / `posted_at`
 - **Settings** (`settings/`): measurement standards via `app_settings` key/value (`GET`/`PATCH /api/settings/measurement`); demo data reset via `POST /api/settings/reset`
 - **Plot size:** projects store `plot_size_sqft` only; UI converts Gazz / Sq. Ft / Marla using Settings Marla factor (Gazz = 9 sq ft fixed)
 - **DEVELOPMENT stages:** auto-seeded template; mid-sale via `POST /api/projects/:id/sell-during-construction` locks stages

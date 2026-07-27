@@ -1,6 +1,6 @@
 # Database
 
-Source of truth: TypeORM entities under `backend/server/src/**/entities/` (**36** tables). Schema is applied via TypeORM `synchronize: true` — **not** Prisma migrations. See [Decisions.md](Decisions.md).
+Source of truth: TypeORM entities under `backend/server/src/**/entities/` (**38** tables). Schema is applied via TypeORM `synchronize: true` — **not** Prisma migrations. See [Decisions.md](Decisions.md).
 
 There is **no** generic `tasks` table. Construction work breakdown is `project_stages` (plus `stage_budgets` / `stage_progress`).
 
@@ -242,7 +242,7 @@ Append-only movements. `movement_type` varchar (app uses `RECEIPT`, `ISSUE`, `TR
 
 ### `expenses`
 
-Required `project_id`, `project_stage_id`, `category`, `payment_type`, `expense_date`, `amount`. **enum** `vendor_type`: `SUPPLIER`, `LABOUR`, `OTHER` with optional `supplier_id` / `contractor_id`. **enum** `entry_mode`: `DIRECT` (pay now) | `BILL` (accrual). Optional `bank_account_id` → `bank_accounts` (required for Bank Transfer / Cheque). `paid_amount`, `status` (`Paid` / `Unpaid` / `Partial`). Optional `cash_transaction_id`. Land purchase uses expense category (costs not duplicated on parcels).
+Required `project_id`, `project_stage_id`, `category`, `payment_type`, `expense_date`, `amount`. **enum** `vendor_type`: `SUPPLIER`, `LABOUR`, `OTHER` with optional `supplier_id` / `contractor_id`. **enum** `entry_mode`: `DIRECT` (pay now) | `BILL` (accrual). Optional `bank_account_id` → `bank_accounts` (required for Bank Transfer / Cheque). `paid_amount`, `status` (`Paid` / `Unpaid` / `Partial`). Optional `cash_transaction_id`. `created_by` / `updated_by` (JWT actor). Land purchase uses expense category (costs not duplicated on parcels).
 
 ### `expense_payments`
 
@@ -294,7 +294,7 @@ COA: unique `code`, `name`; **enum** `type`: `ASSET`, `LIABILITY`, `EQUITY`, `IN
 
 ### `journal_entries`
 
-`entry_date`, `reference_no`, `description`; **enum** `status`: `Draft`, `Posted`; optional `project_id`.
+`entry_date`, `reference_no`, `description`; **enum** `status`: `Draft`, `Posted`; optional `project_id`; `created_by` / `updated_by`; on post: `posted_by` / `posted_at`.
 
 ### `journal_entry_lines`
 
@@ -336,13 +336,15 @@ Measurement defaults (lazy on first GET if missing): standard `PAKISTAN`, marla 
 | Procurement | suppliers + MR/PO/receipt trail | 6 |
 | Inventory | materials, stock_ledger, material_issues | 3 |
 | Labour | contractors, attendance, advances, payments | 4 |
-| Expenses | expenses | 1 |
+| Expenses | expenses, expense_payments | 2 |
 | Funds | fund_sources, fund_transactions | 2 |
 | Cashflow | cash_transactions | 1 |
 | Sales | customers, property_units, sales, sale_installments | 4 |
 | Accounting | accounts, JE + lines, bank* | 6 |
 | Settings | app_settings | 1 |
-| **Total** | | **37** |
+| **Total** | | **38** |
+
+No dedicated `notifications` table — alerts are computed in `NotificationsService`.
 
 ## Seeds / reference SQL
 

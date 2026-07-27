@@ -16,7 +16,7 @@ Agents and product work follow this order. Full checkboxes: [Tasks.md](Tasks.md)
 | **P2** | Material Requests + approval workflow | **Basic trail done** — deepen (multi-level approvals, notifications) |
 | **P3** | BOQ (Bill of Quantities) | **Not built** — next major greenfield |
 | **P4** | Equipment & machinery (assets, fuel, maintenance) | **Not built** |
-| **P5** | Document management (drawings, contracts, NOCs, approvals, site photos) | **Not built** (URL fields only on land today) |
+| **P5** | Document management (drawings, contracts, NOCs, approvals, site photos) | **Not built** (Documents tab + Upload Document stubs; URL fields only on land) |
 
 ## Why we are building it
 
@@ -125,7 +125,7 @@ Site Engineer → Material Request → Approval → Purchase Order
   → Goods Receipt → Inventory → Material Issue → Construction Stage
 ```
 
-**P2 status:** single-step submit / approve / reject / convert is shipped. Multi-level approvals and notifications are backlog (see [Tasks.md](Tasks.md) P2).
+**P2 status:** single-step submit / approve / reject / convert is shipped. Header alert bell (computed summary) is shipped. Multi-level approvals and **workflow** notifications on MR events remain backlog (see [Tasks.md](Tasks.md) P2).
 
 ### Suppliers and procurement
 
@@ -153,9 +153,11 @@ Site Engineer → Material Request → Approval → Purchase Order
 - Quick-add partner bank: major PK banks combobox (HBL, NBP, UBL, …) + Other; opening balance defaults to 0 (set under Accounting if needed)
 - Optional link of fund source to project for card rollups; project funding should originate from Funds
 - Project file: budget + target sale price; card shows Completion / Budget / Actual / Profit
-- Project cards: common + strategy-specific quick actions; secondary **+ Collection** / Activity / Edit / Delete
-  - **+ Collection:** Installment payment (single open installment) or Full/Direct (lump sum on a sale; FIFO across installments, catch-up installment if needed)
-  - Upload Document on card is toast-only until P5
+- Soft-delete: list lifecycle Active / Archived (Cancelled) / Deleted; restore from Deleted
+- Project workspace tabs include **Activity** (timeline) and **Documents** (P5 stub)
+- Project cards primary actions: **View · Expense · Payment · Collection · Stage Update** (DEVELOPMENT); strategy secondary (Issue Material, Add Labour, …); row: Activity / Upload Document (P5 toast) / Edit / Delete or Restore
+  - **Collection:** Installment payment (single open installment) or Full/Direct (lump sum on a sale; FIFO across installments, catch-up installment if needed)
+- Header **notification bell** polls computed `GET /api/notifications/summary` (low stock, budget, MR pending, overdue installments) — separate from P2 workflow notifications
 
 ### Sales
 
@@ -223,7 +225,7 @@ Every sale should update: revenue, customer receivables, project profit; project
 
 **Commercial backlog** (not permanent exclusions — see [Tasks.md](Tasks.md) P1–P5):
 
-- Multi-level approval matrices / notifications (P2)
+- Multi-level approval matrices / **workflow** notifications on MR submit / approve / reject (P2) — header alert bell is already shipped
 - BOQ, equipment/fuel/maintenance, document blob storage (P3–P5)
 
 **Explicitly out of scope (for now):**

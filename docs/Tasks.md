@@ -43,8 +43,9 @@ Basic trail **shipped**. Deepen approvals next.
 
 - [x] Create → submit → approve/reject → convert to PO
 - [x] Receipt path writes inventory
+- [x] Header notification center (computed summary alerts — not MR workflow events)
 - [ ] Multi-level approval matrices
-- [ ] Notifications / alerts on submit / approve / reject
+- [ ] Notifications / alerts on submit / approve / reject (workflow)
 
 ### P3 — BOQ (Bill of Quantities)
 
@@ -92,6 +93,7 @@ Basic trail **shipped**. Deepen approvals next.
 - [x] Postgres mock seed (`backend/db/seed-mock-projects.pg.sql`, `[MOCK]` prefix)
 - [x] Docs under `docs/` + Decisions / Database / API / Tasks
 - [x] Commercial P1–P5 encoded in docs
+- [x] ERP UX polish: HashRouter; drawers/modals; dirty leave; filters/columns/drafts; Ctrl+K search; breadcrumbs; shortcuts; card primary actions; notification bell; skeletons; optimistic expense create; Activity/Documents tabs; soft-delete + restore; audit actors; multi-tab edit locks
 
 ## Open — other (parallel, not blocking P3+)
 

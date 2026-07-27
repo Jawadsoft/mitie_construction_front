@@ -54,7 +54,12 @@ Leave historical root docs [`scope.md`](../scope.md) and [`development-plan.md`]
 | Payment reflection | Domain tx + posted JE + **computed-on-read** | No event bus / duplicate cash ledger; cashflow from Cash & Bank journals |
 | Investor Ledger | Read over `fund_sources` INVESTOR/EQUITY + txs | No new tables; Funds UI + `GET /api/funds/investor-ledger` |
 | Unit sale → project status | Last Available unit sold → project **Sold** | Skips Cancelled / Sold During Construction; mid-build path stays sell-during-construction |
-| Project card Upload Document | Toast “coming soon” | Real upload is **P5** |
+| Project card Upload Document | Toast “coming soon” | Real upload is **P5**; Documents workspace tab is stub |
+| Project delete | **Soft-delete** (`deleted_at`) + restore | List `lifecycle=active\|archived\|deleted`; Cancelled = Archived |
+| SPA routing | **HashRouter** (`#/…`) | Refresh-safe without SPA rewrite on Render |
+| Global search | Nest `GET /api/search` + Ctrl+K UI | No full-text engine; ILIKE across key tables |
+| Notification center | Computed `GET /api/notifications/summary` | No notifications table; read state in localStorage |
+| Multi-tab edit | `BroadcastChannel` locks | Warn/disable Save when another tab edits same project/expense |
 
 ## Schema application note
 

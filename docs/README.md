@@ -12,7 +12,7 @@ Construction ERP project docs. Active stack: **React + Vite** (`frontend/`) and 
 | [Architecture.md](Architecture.md) | Stack, folders, auth/data flows, payment reflection |
 | [Database.md](Database.md) | Tables from TypeORM entities |
 | [API.md](API.md) | Nest `/api/*` endpoint inventory |
-| [Design.md](Design.md) | UI/UX conventions (Tailwind), project cards |
+| [Design.md](Design.md) | UI/UX conventions (Tailwind), HashRouter, shortcuts, drawers/modals |
 | [Rules.md](Rules.md) | Coding standards for this repo |
 | [Phases.md](Phases.md) | Phased roadmap checklists |
 | [Tasks.md](Tasks.md) | Actionable backlog + commercial priorities P1–P5 |

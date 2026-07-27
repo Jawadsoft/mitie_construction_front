@@ -8,6 +8,7 @@ UI/UX conventions as implemented in the current React + Tailwind app. Prefer mat
 - Light content area on a cool slate shell
 - Blue as the primary action color
 - Dense operational tables with clear page titles and short subtitles
+- **Favicons:** assets in `frontend/public/favicons/` (ico/png + `site.webmanifest`); linked from `frontend/index.html` (`theme-color` `#2563eb`)
 
 ## Colors (Tailwind classes in use)
 
@@ -129,8 +130,11 @@ Project cards primary actions: **View · Expense · Payment · Collection · Sta
 - `components/ConfirmDialog.tsx` — binary `confirm` + `confirmUnsaved` + `UnsavedGuardProvider`
 - `components/StatCard.tsx` — dashboard metrics
 - `components/DetailDrawer.tsx` — view-only side panels (`footer` slot; Escape defers to Modal)
+- `components/Breadcrumbs.tsx` — Project Detail trail
 - `components/ColumnPicker.tsx` — table column visibility
 - `components/GlobalSearch.tsx` — Ctrl+K palette
+- `components/NotificationCenter.tsx` — header bell
+- `components/Skeleton.tsx` — list/detail first-paint placeholders
 - `components/PakistanLocationInput.tsx` — Pakistan city/area typeahead for location fields
 - Shared status color maps per page (Draft / Approved / Posted, etc.)
 

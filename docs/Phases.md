@@ -21,6 +21,7 @@ Checklist-style roadmap for agents and humans. Detail checklists also live in [d
 - [x] Project type (`READY_PROPERTY` \| `LAND`) + subtype + strategy (`DIRECT_SALE` \| `DEVELOPMENT`)
 - [x] Stage gating for Direct Sale projects
 - [x] Stage budgets
+- [x] Project soft-delete + restore + Activity timeline API
 - [ ] Hardened RBAC on all mutating routes (partial) — parallel with Phase 8
 
 ## Phase 2 — Procurement, inventory, labour, expenses
@@ -31,7 +32,8 @@ Checklist-style roadmap for agents and humans. Detail checklists also live in [d
 - [x] Expenses by project/stage
 - [x] Material request → approve → convert to PO
 - [x] Receipt path writes inventory in one API flow
-- [ ] Multi-level MR approvals / notifications — **P2 deepen** ([Tasks.md](Tasks.md))
+- [x] Header notification center (`GET /api/notifications/summary`)
+- [ ] Multi-level MR approvals / workflow notifications — **P2 deepen** ([Tasks.md](Tasks.md))
 
 ## Phase 3 — Sales, funds, cashflow
 

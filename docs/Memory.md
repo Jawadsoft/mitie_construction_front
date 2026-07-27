@@ -40,7 +40,7 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## In Progress
 
-- None (Modal + nav UX shipped)
+- None (ERP UX polish through items 14–25 shipped)
 
 **Current focus:** P2 deepen next (multi-level MR approvals) per [Tasks.md](Tasks.md).
 
@@ -48,10 +48,10 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 Commercial order ([Tasks.md](Tasks.md)):
 
-1. **P2 deepen** — Multi-level MR approvals / notifications
+1. **P2 deepen** — Multi-level MR approvals / workflow notifications on submit / approve / reject (header alert bell is separate and already shipped)
 2. **P3** — BOQ (Bill of Quantities)
 3. **P4** — Equipment & machinery (registry, fuel, maintenance)
-4. **P5** — Document management (drawings, contracts, NOCs, approvals, photos + blob upload) — card **Upload Document** is toast-only until this ships
+4. **P5** — Document management (drawings, contracts, NOCs, approvals, photos + blob upload) — Documents workspace tab + card **Upload Document** are stubs until this ships
 
 Parallel (do not block P3+):
 
@@ -60,7 +60,7 @@ Parallel (do not block P3+):
 
 ## Last update
 
-27 July 2026 — Modal sticky footers, unsaved leave (Discard/Save/Cancel), smart Back
+27 July 2026 — UX 14–25 docs sync (soft-delete, notifications, audit, workspace Activity/Documents, edit locks); fixed missing `isFormDirty` import on ProjectsPage
 
 ## Session ritual
 
