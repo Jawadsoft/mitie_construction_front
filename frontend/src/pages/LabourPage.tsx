@@ -12,6 +12,7 @@ import { getAuthHeaders } from '../api/client';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import type { NavIntent } from '../types/navIntent';
+import { useListFilters } from '../utils/navState';
 
 type Tab = 'contractors' | 'attendance' | 'payments' | 'wages' | 'advances';
 
@@ -37,6 +38,8 @@ export default function LabourPage({
   onIntentConsumed?: () => void;
 } = {}) {
   const confirm = useConfirm();
+  const { filters, setFilter } = useListFilters('labour', ['project']);
+  const filterProject = filters.project ?? '';
   const [tab, setTab] = useState<Tab>('contractors');
   const [contractors, setContractors] = useState<LabourContractor[]>([]);
   const [attendance, setAttendance] = useState<LabourAttendance[]>([]);
@@ -46,7 +49,6 @@ export default function LabourPage({
   const [projects, setProjects] = useState<Project[]>([]);
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [paymentStages, setPaymentStages] = useState<Stage[]>([]);
-  const [filterProject, setFilterProject] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -314,7 +316,7 @@ export default function LabourPage({
       </div>
 
       <div className="flex gap-3 flex-wrap">
-        <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
+        <select value={filterProject} onChange={e => setFilter('project', e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
           <option value="">All Projects</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

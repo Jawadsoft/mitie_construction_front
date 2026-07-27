@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
+import ModalFormFooter from './ModalFormFooter';
 import { createExpense } from '../api/expenses';
 import { createCashTransaction } from '../api/cashflow';
 import { collectSalePayment, getSale, getSales, recordPayment } from '../api/sales';
@@ -9,6 +10,8 @@ import { getProject } from '../api/projects';
 import { getBankAccounts } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
 import { notify, notifyError } from '../utils/toast';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import { useRegisterUnsaved } from './ConfirmDialog';
 
 export type QuickEntryKind = 'expense' | 'collection' | 'payment';
 type CollectionMode = 'installment' | 'full';
@@ -355,10 +358,52 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     }
   };
 
+  const snapshot = { expenseForm, collectionForm, paymentForm, collectionMode };
+  const baselineRef = useRef<typeof snapshot | null>(null);
+  if (!loadingMeta && baselineRef.current === null) {
+    baselineRef.current = snapshot;
+  }
+  const isDirty =
+    baselineRef.current != null && isFormDirty(snapshot, baselineRef.current);
+
+  const runSave = async () => {
+    if (kind === 'expense') await handleSaveExpense();
+    else if (kind === 'collection') await handleSaveCollection();
+    else await handleSavePayment();
+  };
+
+  useRegisterUnsaved({
+    active: true,
+    isDirty,
+    onSave: runSave,
+    onDiscard: onClose,
+  });
+
+  const saveLabel =
+    kind === 'expense'
+      ? expenseForm.entry_mode === 'BILL'
+        ? 'Record Bill'
+        : 'Save Expense'
+      : kind === 'collection'
+        ? 'Save Collection'
+        : 'Save Payment';
+
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal
+      title={title}
+      onClose={onClose}
+      mode="form"
+      isDirty={isDirty}
+      footer={
+        <ModalFormFooter
+          onSave={() => void runSave()}
+          saveLabel={saveLabel}
+          saving={saving}
+          error={error ? <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p> : null}
+        />
+      }
+    >
       <div className="space-y-3">
-        {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
         {loadingMeta && kind !== 'payment' ? (
           <p className="text-sm text-slate-500 py-4 text-center">Loading…</p>
         ) : kind === 'expense' ? (

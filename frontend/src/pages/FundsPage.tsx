@@ -17,15 +17,28 @@ import {
 } from '../api/projects';
 import type { Project, ProjectTypeCode, ProjectStrategy, ProjectSubtype } from '../api/projects';
 import Modal from '../components/Modal';
+import ModalFormFooter from '../components/ModalFormFooter';
 import FundSourceNameInput from '../components/FundSourceNameInput';
 import PakistanBankNameInput from '../components/PakistanBankNameInput';
 import PakistanLocationInput from '../components/PakistanLocationInput';
 import StatCard from '../components/StatCard';
 import { amountToWordsPk, formatMoneyDisplay, parseMoneyInput } from '../utils/money';
 import { formatDate, toDateOnly } from '../utils/date';
-import { useConfirm } from '../components/ConfirmDialog';
+import { useConfirm, useRegisterUnsaved } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import { useListFilters } from '../utils/navState';
+import { useColumnPrefs } from '../utils/columnPrefs';
+import ColumnPicker from '../components/ColumnPicker';
 
+const FUND_RECEIPT_COLUMNS = [
+  { id: 'source', label: 'Source' },
+  { id: 'date', label: 'Date' },
+  { id: 'amount', label: 'Amount' },
+  { id: 'ref', label: 'Reference' },
+  { id: 'actions', label: 'Actions' },
+];
+const FUND_RECEIPT_IDS = FUND_RECEIPT_COLUMNS.map((c) => c.id);
 const SOURCE_TYPES = ['EQUITY', 'LOAN', 'INVESTOR', 'ADVANCE_SALES', 'OTHER'];
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   EQUITY: 'Equity',
@@ -95,6 +108,12 @@ function sourceBankLabel(s: FundSource) {
 
 export default function FundsPage() {
   const confirm = useConfirm();
+  const { filters, setFilter } = useListFilters('funds', ['status']);
+  const filterStatus = filters.status ?? '';
+  const { visible: receiptCols, isVisible: receiptVis, toggle: toggleReceiptCol } = useColumnPrefs(
+    'funds.receipts',
+    FUND_RECEIPT_IDS,
+  );
   const [sources, setSources] = useState<FundSource[]>([]);
   const [transactions, setTransactions] = useState<FundTransaction[]>([]);
   const [banks, setBanks] = useState<BankAccount[]>([]);
@@ -106,13 +125,14 @@ export default function FundsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedSource, setSelectedSource] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
   const [editingSource, setEditingSource] = useState<FundSource | null>(null);
   const [editingTx, setEditingTx] = useState<FundTransaction | null>(null);
   const [investorLedger, setInvestorLedger] = useState<InvestorLedger | null>(null);
 
   const [sourceForm, setSourceForm] = useState(emptySourceForm);
+  const [sourceBaseline, setSourceBaseline] = useState(emptySourceForm);
   const [txForm, setTxForm] = useState(emptyTxForm);
+  const [txBaseline, setTxBaseline] = useState(emptyTxForm);
   const [bankForm, setBankForm] = useState(emptyBankForm);
   const [projectForm, setProjectForm] = useState(emptyProjectForm);
 
@@ -155,13 +175,14 @@ export default function FundsPage() {
   const openAddSource = () => {
     setEditingSource(null);
     setSourceForm(emptySourceForm);
+    setSourceBaseline(emptySourceForm);
     setError('');
     setShowSourceModal(true);
   };
 
   const openEditSource = (s: FundSource) => {
     setEditingSource(s);
-    setSourceForm({
+    const next = {
       bank_account_id: s.bank_account_id ?? '',
       project_id: s.project_id ?? '',
       source_name: s.source_name,
@@ -169,7 +190,9 @@ export default function FundsPage() {
       total_committed: parseMoneyInput(String(Math.floor(Number(s.total_committed)) || '')),
       expected_date: toDateOnly(s.expected_date) || '',
       notes: s.notes ?? '',
-    });
+    };
+    setSourceForm(next);
+    setSourceBaseline(next);
     setError('');
     setShowSourceModal(true);
   };
@@ -177,19 +200,22 @@ export default function FundsPage() {
   const openAddTx = () => {
     setEditingTx(null);
     setTxForm(emptyTxForm);
+    setTxBaseline(emptyTxForm);
     setError('');
     setShowTxModal(true);
   };
 
   const openEditTx = (t: FundTransaction) => {
     setEditingTx(t);
-    setTxForm({
+    const next = {
       fund_source_id: t.fund_source_id,
       transaction_date: toDateOnly(t.transaction_date) || new Date().toISOString().split('T')[0],
       amount: t.amount,
       reference_no: t.reference_no ?? '',
       notes: t.notes ?? '',
-    });
+    };
+    setTxForm(next);
+    setTxBaseline(next);
     setError('');
     setShowTxModal(true);
   };
@@ -197,12 +223,12 @@ export default function FundsPage() {
   const handleSaveSource = async () => {
     if (!sourceForm.bank_account_id || !sourceForm.source_name || !sourceForm.total_committed) {
       setError('Partner bank, name, and amount are required');
-      return;
+      throw new Error('validation');
     }
     const amount = Number(sourceForm.total_committed);
     if (!Number.isFinite(amount) || amount < 1000) {
       setError('Total committed must be at least PKR 1,000');
-      return;
+      throw new Error('validation');
     }
     setError('');
     const payload: Partial<FundSource> = {
@@ -221,6 +247,7 @@ export default function FundsPage() {
       load();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save fund source');
+      throw e;
     }
   };
 
@@ -268,12 +295,12 @@ export default function FundsPage() {
   const handleSaveTx = async () => {
     if (!txForm.fund_source_id || !txForm.amount) {
       setError('Fund source and amount are required');
-      return;
+      throw new Error('validation');
     }
     const transaction_date = toDateOnly(txForm.transaction_date);
     if (!transaction_date) {
       setError('Date is required');
-      return;
+      throw new Error('validation');
     }
     setError('');
     const payload = { ...txForm, transaction_date };
@@ -285,8 +312,25 @@ export default function FundsPage() {
       notify.success(editingTx ? 'Receipt updated' : 'Receipt recorded');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save receipt');
+      throw e;
     }
   };
+
+  const sourceDirty = isFormDirty(sourceForm, sourceBaseline);
+  const txDirty = isFormDirty(txForm, txBaseline);
+
+  useRegisterUnsaved({
+    active: showSourceModal,
+    isDirty: sourceDirty,
+    onSave: handleSaveSource,
+    onDiscard: () => setShowSourceModal(false),
+  });
+  useRegisterUnsaved({
+    active: showTxModal,
+    isDirty: txDirty,
+    onSave: handleSaveTx,
+    onDiscard: () => setShowTxModal(false),
+  });
 
   const handleDeleteTx = async (id: string) => {
     const ok = await confirm({
@@ -475,7 +519,7 @@ export default function FundsPage() {
         <h2 className="font-semibold text-gray-800 mr-2">Fund Commitments</h2>
         <select
           value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
+          onChange={(e) => setFilter('status', e.target.value)}
           className="border rounded-lg px-3 py-1.5 text-sm"
         >
           <option value="">All statuses</option>
@@ -548,34 +592,39 @@ export default function FundsPage() {
         <button onClick={() => setSelectedSource('')} className="text-sm text-blue-600 hover:underline">Clear Filter</button>
       )}
 
-      <h2 className="font-semibold text-gray-800">Fund Receipts</h2>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="font-semibold text-gray-800">Fund Receipts</h2>
+        <ColumnPicker columns={FUND_RECEIPT_COLUMNS} visible={receiptCols} onToggle={toggleReceiptCol} />
+      </div>
       <div className="bg-white rounded-xl border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-gray-600">Source</th>
-                <th className="px-4 py-3 text-left text-gray-600">Date</th>
-                <th className="px-4 py-3 text-right text-gray-600">Amount (PKR)</th>
-                <th className="px-4 py-3 text-left text-gray-600">Reference</th>
-                <th className="px-4 py-3 text-center text-gray-600">Actions</th>
+                {receiptVis('source') && <th className="px-4 py-3 text-left text-gray-600">Source</th>}
+                {receiptVis('date') && <th className="px-4 py-3 text-left text-gray-600">Date</th>}
+                {receiptVis('amount') && <th className="px-4 py-3 text-right text-gray-600">Amount (PKR)</th>}
+                {receiptVis('ref') && <th className="px-4 py-3 text-left text-gray-600">Reference</th>}
+                {receiptVis('actions') && <th className="px-4 py-3 text-center text-gray-600">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {transactions.length === 0 ? (
-                <tr><td colSpan={5} className="text-center text-gray-400 py-8">No receipts yet.</td></tr>
+                <tr><td colSpan={receiptCols.length} className="text-center text-gray-400 py-8">No receipts yet.</td></tr>
               ) : transactions.map((t) => (
                 <tr key={t.id} className="border-t hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium">{t.fund_source?.source_name ?? t.fund_source_id}</td>
-                  <td className="px-4 py-3">{formatDate(t.transaction_date)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-600 font-medium">{Number(t.amount).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-gray-400">{t.reference_no ?? '-'}</td>
-                  <td className="px-4 py-3 text-center">
-                    <div className="flex justify-center gap-2">
-                      <button onClick={() => openEditTx(t)} className="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">Edit</button>
-                      <button onClick={() => handleDeleteTx(t.id)} className="text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">Delete</button>
-                    </div>
-                  </td>
+                  {receiptVis('source') && <td className="px-4 py-3 font-medium">{t.fund_source?.source_name ?? t.fund_source_id}</td>}
+                  {receiptVis('date') && <td className="px-4 py-3">{formatDate(t.transaction_date)}</td>}
+                  {receiptVis('amount') && <td className="px-4 py-3 text-right font-mono text-green-600 font-medium">{Number(t.amount).toLocaleString()}</td>}
+                  {receiptVis('ref') && <td className="px-4 py-3 text-gray-400">{t.reference_no ?? '-'}</td>}
+                  {receiptVis('actions') && (
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button onClick={() => openEditTx(t)} className="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                        <button onClick={() => handleDeleteTx(t.id)} className="text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">Delete</button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -584,9 +633,20 @@ export default function FundsPage() {
       </div>
 
       {showSourceModal && (
-        <Modal title={editingSource ? 'Edit Fund Source' : 'Add Fund Source'} onClose={() => setShowSourceModal(false)}>
+        <Modal
+          title={editingSource ? 'Edit Fund Source' : 'Add Fund Source'}
+          mode="form"
+          isDirty={sourceDirty}
+          onClose={() => setShowSourceModal(false)}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSaveSource()}
+              saveLabel={editingSource ? 'Update Fund Source' : 'Add Fund Source'}
+              error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-sm font-medium text-gray-700">Partner Bank *</label>
@@ -682,9 +742,6 @@ export default function FundsPage() {
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
               />
             </div>
-            <button onClick={handleSaveSource} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">
-              {editingSource ? 'Update Fund Source' : 'Add Fund Source'}
-            </button>
           </div>
         </Modal>
       )}
@@ -822,9 +879,20 @@ export default function FundsPage() {
       )}
 
       {showTxModal && (
-        <Modal title={editingTx ? 'Edit Receipt' : 'Record Fund Receipt'} onClose={() => setShowTxModal(false)}>
+        <Modal
+          title={editingTx ? 'Edit Receipt' : 'Record Fund Receipt'}
+          mode="form"
+          isDirty={txDirty}
+          onClose={() => setShowTxModal(false)}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSaveTx()}
+              saveLabel={editingTx ? 'Update Receipt' : 'Record Receipt'}
+              error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Fund Source *</label>
               <select
@@ -873,9 +941,6 @@ export default function FundsPage() {
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
               />
             </div>
-            <button onClick={handleSaveTx} className="w-full bg-green-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-green-700">
-              {editingTx ? 'Update Receipt' : 'Record Receipt'}
-            </button>
           </div>
         </Modal>
       )}

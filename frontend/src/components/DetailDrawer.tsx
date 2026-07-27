@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { isModalOpen } from './Modal';
 
 interface Props {
   open: boolean;
@@ -9,14 +9,31 @@ interface Props {
   onClose: () => void;
   children: ReactNode;
   loading?: boolean;
+  /** Sticky bottom actions (Edit / Close). View drawers only. */
+  footer?: ReactNode;
 }
 
-export default function DetailDrawer({ open, title, subtitle, onClose, children, loading }: Props) {
+export default function DetailDrawer({
+  open,
+  title,
+  subtitle,
+  onClose,
+  children,
+  loading,
+  footer,
+}: Props) {
   useBodyScrollLock(open);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    if (open) document.addEventListener('keydown', handler);
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Prefer Modal Escape when a form dialog is open on top
+      if (isModalOpen()) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
@@ -24,34 +41,39 @@ export default function DetailDrawer({ open, title, subtitle, onClose, children,
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
-      {/* Drawer panel */}
       <div className="relative z-50 w-full max-w-lg bg-white shadow-2xl flex flex-col h-full overflow-hidden animate-slide-in">
-        {/* Header */}
         <div className="flex items-start justify-between px-5 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
           <div className="min-w-0 pr-3">
             <h2 className="text-base font-bold text-slate-900 truncate">{title}</h2>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5 truncate">{subtitle}</p>}
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
             aria-label="Close"
           >
-            ✕
+            &times;
           </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-5 min-h-0">
           {loading ? (
             <div className="flex items-center justify-center h-40 text-slate-400 text-sm">
               Loading…
             </div>
-          ) : children}
+          ) : (
+            children
+          )}
         </div>
+
+        {footer != null && (
+          <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-3">
+            {footer}
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -65,7 +87,6 @@ export default function DetailDrawer({ open, title, subtitle, onClose, children,
   );
 }
 
-/** A small section heading inside the drawer */
 export function DrawerSection({ title }: { title: string }) {
   return (
     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 mt-5 first:mt-0">
@@ -74,7 +95,6 @@ export function DrawerSection({ title }: { title: string }) {
   );
 }
 
-/** A simple key-value row */
 export function DrawerField({ label, value }: { label: string; value?: string | number | null }) {
   return (
     <div className="flex justify-between items-start py-1.5 border-b border-slate-100 last:border-0 gap-3">
@@ -84,7 +104,6 @@ export function DrawerField({ label, value }: { label: string; value?: string | 
   );
 }
 
-/** A status badge */
 export function StatusBadge({ status }: { status: string }) {
   const color =
     /active|received|completed|paid|sold/i.test(status) ? 'bg-green-100 text-green-700' :

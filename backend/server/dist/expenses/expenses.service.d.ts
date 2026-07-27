@@ -17,7 +17,7 @@ export declare class ExpensesService {
     }): Promise<Expense[]>;
     findPayments(expense_id: string): Promise<ExpensePayment[]>;
     private resolveEntryMode;
-    create(dto: Partial<Expense>): Promise<Expense>;
+    create(dto: Partial<Expense>, userId?: string): Promise<Expense>;
     payBill(expenseId: string, dto: {
         amount: string;
         paid_date: string;
@@ -28,7 +28,7 @@ export declare class ExpensesService {
         expense: Expense | null;
         payment: ExpensePayment;
     }>;
-    update(id: string, dto: Partial<Expense>): Promise<Expense>;
+    update(id: string, dto: Partial<Expense>, userId?: string): Promise<Expense>;
     remove(id: string): Promise<{
         deleted: boolean;
     }>;

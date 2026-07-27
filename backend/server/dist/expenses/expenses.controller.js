@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExpensesController = void 0;
 const common_1 = require("@nestjs/common");
 const expenses_service_1 = require("./expenses.service");
+const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 let ExpensesController = class ExpensesController {
     svc;
     constructor(svc) {
@@ -29,14 +30,14 @@ let ExpensesController = class ExpensesController {
     findPayments(id) {
         return this.svc.findPayments(id);
     }
-    create(dto) {
-        return this.svc.create(dto);
+    create(dto, req) {
+        return this.svc.create(dto, req.user?.userId);
     }
     payBill(id, dto) {
         return this.svc.payBill(id, dto);
     }
-    update(id, dto) {
-        return this.svc.update(id, dto);
+    update(id, dto, req) {
+        return this.svc.update(id, dto, req.user?.userId);
     }
     remove(id) {
         return this.svc.remove(id);
@@ -70,9 +71,11 @@ __decorate([
 ], ExpensesController.prototype, "findPayments", null);
 __decorate([
     (0, common_1.Post)(),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", void 0)
 ], ExpensesController.prototype, "create", null);
 __decorate([
@@ -85,10 +88,12 @@ __decorate([
 ], ExpensesController.prototype, "payBill", null);
 __decorate([
     (0, common_1.Patch)(':id'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [String, Object, Object]),
     __metadata("design:returntype", void 0)
 ], ExpensesController.prototype, "update", null);
 __decorate([

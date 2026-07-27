@@ -9,12 +9,22 @@ import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import { getSuppliers } from '../api/suppliers';
 import type { Supplier } from '../api/suppliers';
-import Modal from '../components/Modal';
+import Modal, { useModalRequestClose } from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { isFormDirty } from '../hooks/useDirtyForm';
 import type { NavIntent } from '../types/navIntent';
+import { useListFilters } from '../utils/navState';
+
+const emptyDpHeader = () => ({
+  supplier_id: '',
+  project_id: '',
+  purchase_date: new Date().toISOString().split('T')[0],
+  invoice_no: '',
+  notes: '',
+});
+const emptyDpLines = () => [{ material_id: '', quantity: '', unit_cost: '' }];
 
 type Tab = 'stock' | 'catalog' | 'receive' | 'issues' | 'ledger' | 'utilization';
 
@@ -49,6 +59,9 @@ export default function InventoryPage({
   onIntentConsumed?: () => void;
 } = {}) {
   const confirm = useConfirm();
+  const { filters, setFilter } = useListFilters('inventory', ['project', 'category']);
+  const filterProject = filters.project ?? '';
+  const filterCategory = filters.category ?? '';
   const [tab, setTab] = useState<Tab>('stock');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [stock, setStock] = useState<StockSummary[]>([]);
@@ -61,15 +74,14 @@ export default function InventoryPage({
 
   // Direct purchase state
   const [showDirectPurchase, setShowDirectPurchase] = useState(false);
-  useBodyScrollLock(showDirectPurchase);
-  const [dpHeader, setDpHeader] = useState({ supplier_id: '', project_id: '', purchase_date: new Date().toISOString().split('T')[0], invoice_no: '', notes: '' });
-  const [dpLines, setDpLines] = useState<{ material_id: string; quantity: string; unit_cost: string }[]>([{ material_id: '', quantity: '', unit_cost: '' }]);
+  const [dpHeader, setDpHeader] = useState(emptyDpHeader);
+  const [dpHeaderBaseline, setDpHeaderBaseline] = useState(emptyDpHeader());
+  const [dpLines, setDpLines] = useState(emptyDpLines);
+  const [dpLinesBaseline, setDpLinesBaseline] = useState(emptyDpLines());
   const [dpSaving, setDpSaving] = useState(false);
   const [dpError, setDpError] = useState('');
 
   const [search, setSearch] = useState('');
-  const [filterProject, setFilterProject] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
   const [utilProject, setUtilProject] = useState('');
 
   const [showModal, setShowModal] = useState<'material' | 'receive' | 'issue' | 'adjust' | null>(null);
@@ -143,11 +155,15 @@ export default function InventoryPage({
       return;
     }
     if (initialIntent.action === 'purchase-material') {
-      setDpHeader((h) => ({
-        ...h,
+      const h = {
+        ...emptyDpHeader(),
         project_id: projectId,
-        purchase_date: h.purchase_date || new Date().toISOString().split('T')[0],
-      }));
+      };
+      const lines = emptyDpLines();
+      setDpHeader(h);
+      setDpHeaderBaseline(h);
+      setDpLines(lines);
+      setDpLinesBaseline(lines);
       setShowDirectPurchase(true);
       onIntentConsumed?.();
     }
@@ -212,8 +228,12 @@ export default function InventoryPage({
         });
       }
       setShowDirectPurchase(false);
-      setDpLines([{ material_id: '', quantity: '', unit_cost: '' }]);
-      setDpHeader({ supplier_id: '', project_id: '', purchase_date: new Date().toISOString().split('T')[0], invoice_no: '', notes: '' });
+      const nextHeader = emptyDpHeader();
+      const nextLines = emptyDpLines();
+      setDpLines(nextLines);
+      setDpLinesBaseline(nextLines);
+      setDpHeader(nextHeader);
+      setDpHeaderBaseline(nextHeader);
       await loadData();
     } catch (e: any) { setDpError(e.message); }
     finally { setDpSaving(false); }
@@ -253,7 +273,16 @@ export default function InventoryPage({
           <button onClick={() => { setEditingMaterial(null); setMatForm({ name: '', unit: 'bags', category: '', min_stock_level: '', standard_unit_cost: '', description: '' }); setError(''); setShowModal('material'); }}
             className="border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50">+ Material</button>
           <button
-            onClick={() => { setDpError(''); setShowDirectPurchase(true); }}
+            onClick={() => {
+              const h = emptyDpHeader();
+              const lines = emptyDpLines();
+              setDpHeader(h);
+              setDpHeaderBaseline(h);
+              setDpLines(lines);
+              setDpLinesBaseline(lines);
+              setDpError('');
+              setShowDirectPurchase(true);
+            }}
             className="bg-orange-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-orange-600 font-medium">
             🛒 Direct Purchase
           </button>
@@ -280,7 +309,7 @@ export default function InventoryPage({
           <>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search materials..."
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 w-48" />
-            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
+            <select value={filterCategory} onChange={e => setFilter('category', e.target.value)}
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
               <option value="">All Categories</option>
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -288,7 +317,7 @@ export default function InventoryPage({
           </>
         )}
         {['ledger', 'issues'].includes(tab) && (
-          <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
+          <select value={filterProject} onChange={e => setFilter('project', e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">All Projects</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -798,135 +827,127 @@ export default function InventoryPage({
         </Modal>
       )}
 
-      {/* ─── DIRECT PURCHASE MODAL ─── */}
       {showDirectPurchase && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
-            <div className="px-6 py-4 border-b flex items-start justify-between">
+        <Modal
+          title="🛒 Direct Purchase (No PO)"
+          size="lg"
+          mode="form"
+          isDirty={
+            isFormDirty(dpHeader, dpHeaderBaseline) || isFormDirty(dpLines, dpLinesBaseline)
+          }
+          onClose={() => setShowDirectPurchase(false)}
+          footer={
+            <DirectPurchaseFooter
+              error={dpError}
+              saving={dpSaving}
+              itemCount={dpLines.filter((l) => l.material_id && l.quantity && l.unit_cost).length}
+              onSave={handleDirectPurchase}
+            />
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              Record materials bought directly — no Purchase Order needed. All items go straight into inventory stock.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <h3 className="font-bold text-gray-900 text-lg">🛒 Direct Purchase (No PO)</h3>
-                <p className="text-sm text-gray-500 mt-0.5">Record materials bought directly — no Purchase Order needed. All items go straight into inventory stock.</p>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Supplier (Optional)</label>
+                <select value={dpHeader.supplier_id} onChange={e => setDpHeader(h => ({ ...h, supplier_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
+                  <option value="">-- Cash / Unknown Supplier --</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
               </div>
-              <button onClick={() => setShowDirectPurchase(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-4">×</button>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Project (Optional)</label>
+                <select value={dpHeader.project_id} onChange={e => setDpHeader(h => ({ ...h, project_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
+                  <option value="">-- No Project --</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Date *</label>
+                <input type="date" value={dpHeader.purchase_date} onChange={e => setDpHeader(h => ({ ...h, purchase_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Invoice / Bill No</label>
+                <input value={dpHeader.invoice_no} onChange={e => setDpHeader(h => ({ ...h, invoice_no: e.target.value }))}
+                  placeholder="e.g. INV-1234"
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                <input value={dpHeader.notes} onChange={e => setDpHeader(h => ({ ...h, notes: e.target.value }))}
+                  placeholder="e.g. Emergency purchase from market"
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              </div>
             </div>
 
-            <div className="overflow-y-auto flex-1 p-5 space-y-4">
-              {/* Header info */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Supplier (Optional)</label>
-                  <select value={dpHeader.supplier_id} onChange={e => setDpHeader(h => ({ ...h, supplier_id: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
-                    <option value="">-- Cash / Unknown Supplier --</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Project (Optional)</label>
-                  <select value={dpHeader.project_id} onChange={e => setDpHeader(h => ({ ...h, project_id: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
-                    <option value="">-- No Project --</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Date *</label>
-                  <input type="date" value={dpHeader.purchase_date} onChange={e => setDpHeader(h => ({ ...h, purchase_date: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Invoice / Bill No</label>
-                  <input value={dpHeader.invoice_no} onChange={e => setDpHeader(h => ({ ...h, invoice_no: e.target.value }))}
-                    placeholder="e.g. INV-1234"
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                  <input value={dpHeader.notes} onChange={e => setDpHeader(h => ({ ...h, notes: e.target.value }))}
-                    placeholder="e.g. Emergency purchase from market"
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-gray-700">Items Purchased</h4>
+                <button
+                  type="button"
+                  onClick={() => setDpLines(l => [...l, { material_id: '', quantity: '', unit_cost: '' }])}
+                  className="text-xs text-orange-600 hover:text-orange-800 font-medium border border-orange-300 px-2 py-1 rounded-lg hover:bg-orange-50"
+                >
+                  + Add Item
+                </button>
               </div>
 
-              {/* Line items */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-semibold text-gray-700">Items Purchased</h4>
-                  <button
-                    onClick={() => setDpLines(l => [...l, { material_id: '', quantity: '', unit_cost: '' }])}
-                    className="text-xs text-orange-600 hover:text-orange-800 font-medium border border-orange-300 px-2 py-1 rounded-lg hover:bg-orange-50"
-                  >
-                    + Add Item
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {dpLines.map((line, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-end bg-gray-50 rounded-xl p-3">
-                      <div className="col-span-12 sm:col-span-5">
-                        <label className="block text-xs text-gray-500 mb-1">Material *</label>
-                        <select value={line.material_id}
-                          onChange={e => {
-                            const mat = materials.find(m => m.id === e.target.value);
-                            setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, material_id: e.target.value, unit_cost: mat?.standard_unit_cost ?? l.unit_cost } : l));
-                          }}
-                          className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
-                          <option value="">-- Select --</option>
-                          {materials.map(m => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
-                        </select>
-                      </div>
-                      <div className="col-span-5 sm:col-span-3">
-                        <label className="block text-xs text-gray-500 mb-1">Qty *</label>
-                        <input type="number" value={line.quantity} placeholder="0"
-                          onChange={e => setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, quantity: e.target.value } : l))}
-                          className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                      </div>
-                      <div className="col-span-5 sm:col-span-3">
-                        <label className="block text-xs text-gray-500 mb-1">Unit Cost (PKR) *</label>
-                        <input type="number" value={line.unit_cost} placeholder="0"
-                          onChange={e => setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, unit_cost: e.target.value } : l))}
-                          className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                      </div>
-                      <div className="col-span-2 sm:col-span-1 flex items-end pb-0.5">
-                        {dpLines.length > 1 && (
-                          <button onClick={() => setDpLines(prev => prev.filter((_, i) => i !== idx))}
-                            className="text-red-400 hover:text-red-600 text-lg w-full flex justify-center">×</button>
-                        )}
-                      </div>
-                      {line.quantity && line.unit_cost && (
-                        <div className="col-span-12 text-xs text-orange-700 font-medium -mt-1 pl-1">
-                          = PKR {(Number(line.quantity) * Number(line.unit_cost)).toLocaleString()}
-                        </div>
+              <div className="space-y-2">
+                {dpLines.map((line, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-end bg-gray-50 rounded-xl p-3">
+                    <div className="col-span-12 sm:col-span-5">
+                      <label className="block text-xs text-gray-500 mb-1">Material *</label>
+                      <select value={line.material_id}
+                        onChange={e => {
+                          const mat = materials.find(m => m.id === e.target.value);
+                          setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, material_id: e.target.value, unit_cost: mat?.standard_unit_cost ?? l.unit_cost } : l));
+                        }}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
+                        <option value="">-- Select --</option>
+                        {materials.map(m => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-5 sm:col-span-3">
+                      <label className="block text-xs text-gray-500 mb-1">Qty *</label>
+                      <input type="number" value={line.quantity} placeholder="0"
+                        onChange={e => setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, quantity: e.target.value } : l))}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                    </div>
+                    <div className="col-span-5 sm:col-span-3">
+                      <label className="block text-xs text-gray-500 mb-1">Unit Cost (PKR) *</label>
+                      <input type="number" value={line.unit_cost} placeholder="0"
+                        onChange={e => setDpLines(prev => prev.map((l, i) => i === idx ? { ...l, unit_cost: e.target.value } : l))}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 flex items-end pb-0.5">
+                      {dpLines.length > 1 && (
+                        <button type="button" onClick={() => setDpLines(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-red-400 hover:text-red-600 text-lg w-full flex justify-center">×</button>
                       )}
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Grand total */}
-              {dpTotal > 0 && (
-                <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex justify-between items-center">
-                  <span className="text-sm font-semibold text-orange-800">Total Purchase Value</span>
-                  <span className="text-lg font-bold text-orange-900">PKR {dpTotal.toLocaleString()}</span>
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 border-t space-y-3">
-              {dpError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{dpError}</p>}
-              <div className="flex gap-3">
-                <button onClick={() => setShowDirectPurchase(false)}
-                  className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm hover:bg-gray-50">
-                  Cancel
-                </button>
-                <button onClick={handleDirectPurchase} disabled={dpSaving}
-                  className="flex-1 bg-orange-500 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50">
-                  {dpSaving ? 'Saving…' : `✓ Save ${dpLines.filter(l => l.material_id && l.quantity && l.unit_cost).length} Item(s) to Inventory`}
-                </button>
+                    {line.quantity && line.unit_cost && (
+                      <div className="col-span-12 text-xs text-orange-700 font-medium -mt-1 pl-1">
+                        = PKR {(Number(line.quantity) * Number(line.unit_cost)).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
+
+            {dpTotal > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex justify-between items-center">
+                <span className="text-sm font-semibold text-orange-800">Total Purchase Value</span>
+                <span className="text-lg font-bold text-orange-900">PKR {dpTotal.toLocaleString()}</span>
+              </div>
+            )}
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Float button for Adjust */}
@@ -993,6 +1014,42 @@ export default function InventoryPage({
           </>
         )}
       </DetailDrawer>
+    </div>
+  );
+}
+
+function DirectPurchaseFooter({
+  error,
+  saving,
+  itemCount,
+  onSave,
+}: {
+  error: string;
+  saving: boolean;
+  itemCount: number;
+  onSave: () => void;
+}) {
+  const requestClose = useModalRequestClose();
+  return (
+    <div className="space-y-3">
+      {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className="flex-1 bg-orange-500 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : `✓ Save ${itemCount} Item(s) to Inventory`}
+        </button>
+      </div>
     </div>
   );
 }

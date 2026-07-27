@@ -116,6 +116,10 @@ export interface Project {
   sold_price?: string | number | null;
   sold_buyer_name?: string | null;
   sold_notes?: string | null;
+  created_at?: string | Date;
+  created_by?: string | null;
+  updated_by?: string | null;
+  deleted_at?: string | Date | null;
   stages?: Stage[];
   computed?: {
     total_stage_budget: number;
@@ -161,8 +165,11 @@ async function readError(res: Response, fallback: string) {
   return fallback;
 }
 
-export async function getProjects(): Promise<Project[]> {
-  const res = await fetch(`${API}/api/projects`, { headers: authHeaders() });
+export async function getProjects(
+  lifecycle: 'active' | 'archived' | 'deleted' = 'active',
+): Promise<Project[]> {
+  const q = lifecycle !== 'active' ? `?lifecycle=${lifecycle}` : '';
+  const res = await fetch(`${API}/api/projects${q}`, { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch projects');
   return res.json();
 }
@@ -223,6 +230,15 @@ export async function deleteProject(id: string): Promise<void> {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(await readError(res, 'Failed to delete project'));
+}
+
+export async function restoreProject(id: string): Promise<Project> {
+  const res = await fetch(`${API}/api/projects/${id}/restore`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to restore project'));
+  return res.json();
 }
 
 export async function sellProjectDuringConstruction(

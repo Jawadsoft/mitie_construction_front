@@ -15,12 +15,14 @@ const stage_budget_entity_1 = require("./entities/stage-budget.entity");
 const stage_progress_entity_1 = require("./entities/stage-progress.entity");
 const projects_service_1 = require("./projects.service");
 const projects_controller_1 = require("./projects.controller");
+const auth_module_1 = require("../auth/auth.module");
 let ProjectsModule = class ProjectsModule {
 };
 exports.ProjectsModule = ProjectsModule;
 exports.ProjectsModule = ProjectsModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            auth_module_1.AuthModule,
             typeorm_1.TypeOrmModule.forFeature([project_entity_1.Project, project_stage_entity_1.ProjectStage, stage_budget_entity_1.StageBudget, stage_progress_entity_1.StageProgress]),
         ],
         controllers: [projects_controller_1.ProjectsController],

@@ -25,5 +25,8 @@ export declare class Project {
     sold_notes: string | null;
     created_at: Date;
     updated_at: Date;
+    created_by: string | null;
+    updated_by: string | null;
+    deleted_at: Date | null;
     stages: ProjectStage[];
 }

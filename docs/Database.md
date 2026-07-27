@@ -108,7 +108,11 @@ Composite PK: `role_id` + `permission_id` → `roles`, `permissions`.
 | `sold_price` | decimal(18,2) nullable | |
 | `sold_buyer_name` | varchar(150) nullable | |
 | `sold_notes` | text nullable | |
+| `created_by`, `updated_by` | bigint nullable | Actor user ids (JWT) |
+| `deleted_at` | timestamp nullable | Soft delete |
 | `created_at`, `updated_at` | timestamp | |
+
+**Expenses / journals (audit):** `expenses.created_by` / `updated_by`; `journal_entries.created_by` / `updated_by` / `posted_by` / `posted_at`.
 
 **Subtype enums**
 

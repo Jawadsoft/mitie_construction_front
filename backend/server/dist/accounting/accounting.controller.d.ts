@@ -14,6 +14,10 @@ export declare class AccountingController {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -25,6 +29,10 @@ export declare class AccountingController {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -57,7 +65,11 @@ export declare class AccountingController {
         }[];
         errors: string[];
     }>;
-    postJournalEntry(id: string): Promise<{
+    postJournalEntry(id: string, req: {
+        user?: {
+            userId?: string;
+        };
+    }): Promise<{
         lines: import("./entities/journal-entry-line.entity").JournalEntryLine[];
         id: string;
         entry_date: string;
@@ -65,6 +77,10 @@ export declare class AccountingController {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -76,6 +92,10 @@ export declare class AccountingController {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;

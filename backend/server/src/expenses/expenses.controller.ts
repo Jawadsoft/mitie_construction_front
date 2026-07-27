@@ -1,5 +1,17 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('api/expenses')
 export class ExpensesController {
@@ -27,8 +39,9 @@ export class ExpensesController {
   }
 
   @Post()
-  create(@Body() dto: any) {
-    return this.svc.create(dto);
+  @UseGuards(JwtAuthGuard)
+  create(@Body() dto: any, @Req() req: { user?: { userId?: string } }) {
+    return this.svc.create(dto, req.user?.userId);
   }
 
   @Post(':id/pay')
@@ -37,8 +50,13 @@ export class ExpensesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: any) {
-    return this.svc.update(id, dto);
+  @UseGuards(JwtAuthGuard)
+  update(
+    @Param('id') id: string,
+    @Body() dto: any,
+    @Req() req: { user?: { userId?: string } },
+  ) {
+    return this.svc.update(id, dto, req.user?.userId);
   }
 
   @Delete(':id')

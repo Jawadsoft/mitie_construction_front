@@ -6,19 +6,25 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateStageDto } from './dto/create-stage.dto';
 import { SellDuringConstructionDto } from './dto/sell-during-construction.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('api/projects')
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   @Get()
-  findAll() {
-    return this.projectsService.findAll();
+  findAll(@Query('lifecycle') lifecycle?: string) {
+    const lc =
+      lifecycle === 'archived' || lifecycle === 'deleted' ? lifecycle : 'active';
+    return this.projectsService.findAll(lc);
   }
 
   @Get(':id/activity')
@@ -32,13 +38,19 @@ export class ProjectsController {
   }
 
   @Post()
-  create(@Body() dto: CreateProjectDto) {
-    return this.projectsService.create(dto);
+  @UseGuards(JwtAuthGuard)
+  create(@Body() dto: CreateProjectDto, @Req() req: { user?: { userId?: string } }) {
+    return this.projectsService.create(dto, req.user?.userId);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: Partial<CreateProjectDto>) {
-    return this.projectsService.update(id, dto);
+  @UseGuards(JwtAuthGuard)
+  update(
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateProjectDto>,
+    @Req() req: { user?: { userId?: string } },
+  ) {
+    return this.projectsService.update(id, dto, req.user?.userId);
   }
 
   @Post(':id/sell-during-construction')
@@ -50,8 +62,15 @@ export class ProjectsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard)
   remove(@Param('id') id: string) {
     return this.projectsService.remove(id);
+  }
+
+  @Post(':id/restore')
+  @UseGuards(JwtAuthGuard)
+  restore(@Param('id') id: string) {
+    return this.projectsService.restore(id);
   }
 
   @Get(':id/stages')

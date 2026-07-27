@@ -8,7 +8,6 @@ import { getSuppliers } from '../api/suppliers';
 import type { Supplier } from '../api/suppliers';
 import { getMaterials } from '../api/inventory';
 import type { Material } from '../api/inventory';
-import Modal from '../components/Modal';
 import {
   getMaterialRequests,
   getMaterialRequest,
@@ -18,10 +17,11 @@ import {
   rejectMaterialRequest,
   convertMaterialRequestToPo,
 } from '../api/materialRequests';
+import type { MaterialRequest, MaterialRequestItem } from '../api/materialRequests';
 import { useConfirm } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
-import type { MaterialRequest, MaterialRequestItem } from '../api/materialRequests';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import Modal, { useModalRequestClose } from '../components/Modal';
 
 const STATUS_COLORS: Record<string, string> = {
   Draft: 'bg-gray-100 text-gray-700',
@@ -68,9 +68,10 @@ export default function ProcurementPage() {
   // Receive-to-inventory modal
   const [materials, setMaterials] = useState<Material[]>([]);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
-  useBodyScrollLock(showReceiveModal);
   const [receiveLines, setReceiveLines] = useState<{ material_id: string; material_name: string; quantity: string; unit_cost: string; skip: boolean }[]>([]);
+  const [receiveLinesBaseline, setReceiveLinesBaseline] = useState<typeof receiveLines>([]);
   const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
+  const [receiveDateBaseline, setReceiveDateBaseline] = useState(new Date().toISOString().split('T')[0]);
   const [receiving, setReceiving] = useState(false);
 
   const load = () => {
@@ -198,7 +199,10 @@ export default function ProcurementPage() {
       };
     });
     setReceiveLines(lines);
-    setReceiveDate(new Date().toISOString().split('T')[0]);
+    setReceiveLinesBaseline(lines);
+    const d = new Date().toISOString().split('T')[0];
+    setReceiveDate(d);
+    setReceiveDateBaseline(d);
     setShowReceiveModal(true);
   };
 
@@ -401,89 +405,88 @@ export default function ProcurementPage() {
           </table>
         </div>
 
-        {/* Receive to Inventory Modal */}
         {showReceiveModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-              <div className="px-6 py-4 border-b">
-                <h3 className="font-bold text-gray-900 text-lg">📥 Receive into Inventory</h3>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Match each PO item to a material in the inventory catalog. Unit cost is pre-filled from the PO price.
-                </p>
+          <Modal
+            title="📥 Receive into Inventory"
+            size="lg"
+            mode="form"
+            isDirty={
+              isFormDirty(receiveLines, receiveLinesBaseline) ||
+              receiveDate !== receiveDateBaseline
+            }
+            onClose={() => {
+              setShowReceiveModal(false);
+              setError('');
+            }}
+            footer={
+              <ReceiveFooter
+                error={error}
+                receiving={receiving}
+                count={receiveLines.filter((l) => !l.skip).length}
+                onConfirm={handleConfirmReceive}
+              />
+            }
+          >
+            <div className="space-y-3">
+              <p className="text-sm text-gray-500">
+                Match each PO item to a material in the inventory catalog. Unit cost is pre-filled from the PO price.
+              </p>
+              <div className="flex items-center gap-3 mb-2">
+                <label className="text-sm font-medium text-gray-700 shrink-0">Receipt Date</label>
+                <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)}
+                  className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
               </div>
 
-              <div className="overflow-y-auto flex-1 p-5 space-y-3">
-                <div className="flex items-center gap-3 mb-4">
-                  <label className="text-sm font-medium text-gray-700 shrink-0">Receipt Date</label>
-                  <input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)}
-                    className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
-                </div>
-
-                {receiveLines.map((line, idx) => (
-                  <div key={idx} className={`rounded-xl border p-4 space-y-3 ${line.skip ? 'opacity-50 bg-gray-50' : 'bg-white'}`}>
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold text-gray-800 text-sm">{line.material_name}</p>
-                      <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
-                        <input type="checkbox" checked={line.skip}
-                          onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, skip: e.target.checked } : l))}
-                          className="accent-gray-500" />
-                        Skip (no inventory update)
-                      </label>
-                    </div>
-                    {!line.skip && (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="sm:col-span-1">
-                          <label className="block text-xs text-gray-500 mb-1">Match to Catalog Material *</label>
-                          <select
-                            value={line.material_id}
-                            onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, material_id: e.target.value } : l))}
-                            className={`w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300 ${!line.material_id ? 'border-amber-400' : 'border-gray-300'}`}
-                          >
-                            <option value="">-- Select Material --</option>
-                            {materials.map(m => (
-                              <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>
-                            ))}
-                          </select>
-                          {!line.material_id && <p className="text-xs text-amber-600 mt-1">Required — select from catalog</p>}
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Quantity</label>
-                          <input type="number" value={line.quantity}
-                            onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, quantity: e.target.value } : l))}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Unit Cost (PKR)</label>
-                          <input type="number" value={line.unit_cost}
-                            onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, unit_cost: e.target.value } : l))}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
-                        </div>
-                      </div>
-                    )}
-                    {!line.skip && line.quantity && line.unit_cost && (
-                      <p className="text-xs text-green-700 font-medium">
-                        Total stock value: PKR {(Number(line.quantity) * Number(line.unit_cost)).toLocaleString()}
-                      </p>
-                    )}
+              {receiveLines.map((line, idx) => (
+                <div key={idx} className={`rounded-xl border p-4 space-y-3 ${line.skip ? 'opacity-50 bg-gray-50' : 'bg-white'}`}>
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-gray-800 text-sm">{line.material_name}</p>
+                    <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+                      <input type="checkbox" checked={line.skip}
+                        onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, skip: e.target.checked } : l))}
+                        className="accent-gray-500" />
+                      Skip (no inventory update)
+                    </label>
                   </div>
-                ))}
-              </div>
-
-              <div className="px-6 py-4 border-t space-y-3">
-                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-                <div className="flex gap-3">
-                  <button onClick={() => { setShowReceiveModal(false); setError(''); }}
-                    className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm hover:bg-gray-50">
-                    Cancel
-                  </button>
-                  <button onClick={handleConfirmReceive} disabled={receiving}
-                    className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50">
-                    {receiving ? 'Saving…' : `✓ Confirm & Receive ${receiveLines.filter(l => !l.skip).length} Items`}
-                  </button>
+                  {!line.skip && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-1">
+                        <label className="block text-xs text-gray-500 mb-1">Match to Catalog Material *</label>
+                        <select
+                          value={line.material_id}
+                          onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, material_id: e.target.value } : l))}
+                          className={`w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300 ${!line.material_id ? 'border-amber-400' : 'border-gray-300'}`}
+                        >
+                          <option value="">-- Select Material --</option>
+                          {materials.map(m => (
+                            <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>
+                          ))}
+                        </select>
+                        {!line.material_id && <p className="text-xs text-amber-600 mt-1">Required — select from catalog</p>}
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Quantity</label>
+                        <input type="number" value={line.quantity}
+                          onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, quantity: e.target.value } : l))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Unit Cost (PKR)</label>
+                        <input type="number" value={line.unit_cost}
+                          onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, unit_cost: e.target.value } : l))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-300" />
+                      </div>
+                    </div>
+                  )}
+                  {!line.skip && line.quantity && line.unit_cost && (
+                    <p className="text-xs text-green-700 font-medium">
+                      Total stock value: PKR {(Number(line.quantity) * Number(line.unit_cost)).toLocaleString()}
+                    </p>
+                  )}
                 </div>
-              </div>
+              ))}
             </div>
-          </div>
+          </Modal>
         )}
       </div>
     );
@@ -725,6 +728,42 @@ export default function ProcurementPage() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+function ReceiveFooter({
+  error,
+  receiving,
+  count,
+  onConfirm,
+}: {
+  error: string;
+  receiving: boolean;
+  count: number;
+  onConfirm: () => void;
+}) {
+  const requestClose = useModalRequestClose();
+  return (
+    <div className="space-y-3">
+      {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="flex-1 border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={receiving}
+          className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50"
+        >
+          {receiving ? 'Saving…' : `✓ Confirm & Receive ${count} Items`}
+        </button>
+      </div>
     </div>
   );
 }

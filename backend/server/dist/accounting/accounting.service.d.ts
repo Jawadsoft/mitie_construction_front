@@ -36,6 +36,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -52,10 +56,14 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
-    postJournalEntry(id: string, manager?: EntityManager): Promise<{
+    postJournalEntry(id: string, manager?: EntityManager, userId?: string): Promise<{
         lines: JournalEntryLine[];
         id: string;
         entry_date: string;
@@ -63,6 +71,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -77,6 +89,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -139,6 +155,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -150,6 +170,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -167,6 +191,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -178,6 +206,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -195,6 +227,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -218,6 +254,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;
@@ -238,6 +278,10 @@ export declare class AccountingService implements OnModuleInit {
         description: string | null;
         status: string;
         project_id: string | null;
+        created_by: string | null;
+        updated_by: string | null;
+        posted_by: string | null;
+        posted_at: Date | null;
         created_at: Date;
         updated_at: Date;
     }>;

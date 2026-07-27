@@ -44,16 +44,93 @@ Do not introduce purple gradient themes or decorative glow aesthetics for this p
 
 ## Layout
 
-- Sticky dark header with product name and user chip
+- Sticky dark header with product name, **global search** (Ctrl/Cmd+K or `/`), **notification bell**, and user chip
 - Left sidebar: section labels + nav items; drawer on mobile, static on `md+`
 - Main content padded; tables in bordered white cards with optional horizontal scroll
-- Modals: centered overlay (`Modal` component), max height with internal scroll for long forms
+- **Breadcrumbs** on Project Detail: `Projects > {name} > {Tab} > {Stage?}`
+- **View detail:** right `DetailDrawer` (list stays visible behind dimmed backdrop); sticky footer for Close/Edit actions; Escape ignored when a `Modal` is open on top
+- **Create/edit forms:** centered `Modal` (sticky footer + dirty guard) — not drawers
+- **Hash routing:** `HashRouter` — refresh restores screen via `#/…` (no Render SPA rewrite needed)
+- **Skeletons** for first paint (Projects/Expenses/Detail); spinners only for in-modal saves
+- **Optimistic** expense create (temp row then replace / rollback)
+
+## URL conventions
+
+| Hash path | Screen |
+|-----------|--------|
+| `#/login` | Login |
+| `#/dashboard` | Dashboard (default when authenticated) |
+| `#/projects` | Projects list (`?status=` & `?location=` filters) |
+| `#/projects/:id` | Project Detail (`?tab=construction\|funding\|…\|activity\|documents&stage=:stageId`) |
+| `#/funds`, `#/sales`, `#/expenses`, … | Other sidebar pages |
+
+- List filters: primary in URL query; when query is empty, restore from `localStorage` JSON `erp.filters.{page}` via `useListFilters` (Projects, Expenses, Funds, Inventory, Labour, Sales).
+- Column visibility: `localStorage` `erp.columns.{tableId}` + `ColumnPicker` (Expenses, Funds receipts, Sales list, Projects table).
+- Form drafts (create only): `erp.draft.projects.create`, `erp.draft.expenses.create` via `useFormDraft`.
+- Session recovery: `erp.lastRoute` updated on each authenticated navigation; restored after login / empty-dashboard boot.
+- Project Detail: `?tab=` syncs workspace tab (includes **activity** + **documents**); `?stage=` scrolls/highlights that construction stage; **Copy link** on header.
+- Projects list lifecycle: Active / Archived (Cancelled) / Deleted (`?lifecycle=` on API).
+- Auth: unauthenticated → `#/login`; after login prefer `erp.lastRoute`, else `sessionStorage erp.returnTo`, else `#/dashboard`.
+- Helpers: `frontend/src/utils/navState.ts`, `columnPrefs.ts`
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `N` | New Project (on `#/projects`) |
+| `Ctrl/Cmd+S` | Save open form modal |
+| `/` or `Ctrl/Cmd+K` | Global search |
+| `Esc` | Close modal / drawer / search |
+| `?` | Shortcuts help |
+
+Ignore letter shortcuts while typing in inputs (Ctrl+S still works).
+
+## Notifications
+
+Header bell polls `GET /api/notifications/summary` (~60s). Types: Low Stock, Budget Exceeded, MR Waiting Approval, Installment Overdue. Read state in `erp.notifications.readIds` (localStorage).
+
+## Multi-tab edit lock
+
+`useEditLock` via `BroadcastChannel('erp-edit-locks')` on Project/Expense edit modals — warn and disable Save if another tab holds the lock.
+
+## Project workspace
+
+Always-visible Overview + Financial Summary. Tabs: Construction, Funding, Inventory, Procurement, Labour, Expenses, Sales, Profitability, **Activity** (timeline), **Documents** (P5 stub).
+
+Project cards primary actions: **View · Expense · Payment · Collection · Stage Update** (DEVELOPMENT).
+
+## Modal behavior
+
+`Modal` props: `mode?: 'view' | 'form'` (default **form**), `isDirty?: boolean`, optional `footer` (sticky Cancel/Save).
+
+| Mode | Backdrop / Escape / X |
+|------|------------------------|
+| `view` | Close immediately (Activity Log, confirm dialogs) |
+| `form` + `!isDirty` | Close immediately |
+| `form` + `isDirty` | Confirm: “Unsaved changes. Leave without saving?” Stay / Leave |
+
+- Every dialog must support **ESC** and a top-right **X** (never rely on backdrop alone). Prefer shared `Modal` over raw `fixed inset-0` overlays.
+- Large form modals: pass sticky `footer` with Cancel + Save (`ModalFormFooter`); body scrolls, actions stay visible.
+- Cancel in footer/body should call `useModalRequestClose()` so dirty confirm is shared.
+- Dirty helpers: `isFormDirty` / `useDirtyForm` in `frontend/src/hooks/useDirtyForm.ts`.
+- **In-app leave** (sidebar, Back, project select) while a registered form is dirty: three-way prompt **Discard | Save | Cancel** via `useConfirmUnsaved` + `useRegisterUnsaved` / `UnsavedGuardProvider`. Browser refresh uses native `beforeunload` only.
+- **Smart Back:** in-app stack in `utils/navHistory.ts` (`pushNavHistory` / `popSmartBack`); Project Detail Back returns to previous screen, not always Projects/Dashboard.
+
+## Global search
+
+- Shortcut: **Ctrl/Cmd+K** (header search button).
+- API: `GET /api/search?q=` (JWT, min 2 chars) — projects, land, customers, sales, expenses, suppliers.
+- UI: `components/GlobalSearch.tsx` command palette; Enter/click navigates to entity route.
 
 ## Components to reuse
 
-- `components/Modal.tsx` — dialogs
+- `components/Modal.tsx` — dialogs (`mode` / `isDirty` / `footer` / `useModalRequestClose` / `isModalOpen`)
+- `components/ModalFormFooter.tsx` — sticky Cancel + Save
+- `components/ConfirmDialog.tsx` — binary `confirm` + `confirmUnsaved` + `UnsavedGuardProvider`
 - `components/StatCard.tsx` — dashboard metrics
-- `components/DetailDrawer.tsx` — side detail where used
+- `components/DetailDrawer.tsx` — view-only side panels (`footer` slot; Escape defers to Modal)
+- `components/ColumnPicker.tsx` — table column visibility
+- `components/GlobalSearch.tsx` — Ctrl+K palette
 - `components/PakistanLocationInput.tsx` — Pakistan city/area typeahead for location fields
 - Shared status color maps per page (Draft / Approved / Posted, etc.)
 
@@ -68,13 +145,11 @@ Do not introduce purple gradient themes or decorative glow aesthetics for this p
   2. **Subtype** — filtered list for that type
   3. **Project Strategy** — Direct Sale / Development (Ready Property locked to Direct Sale)
 - Direct Sale projects: Project Detail hides Construction tab; Sales/Funding/etc. remain.
-- **Project Detail workspace:** Overview (name, type, strategy, status, location, owner, manager) + Financial Summary (Budget, Actual, Revenue, Expected/Actual Profit) always visible; tabs: Construction | Funding | Inventory | Procurement | Labour | Expenses | Sales | Profitability (`ProjectWorkspacePanels`). Card `navIntent` update-stage / sell-project opens Construction tab.
-- List/cards show type + subtype + strategy badges.
-- Project list cards primary metrics: **Completion**, **Budget**, **Actual** (`total_spent`), **Profit** (Pending until sold_value > 0), plus extras (Target Sale, Sales, budget used %, collections, fund receipts).
-- Common actions: View Details, Add Expense, Add Payment, Upload Document (toast until P5).
-- DEVELOPMENT actions: Update Stage, Issue Material, Add Labour, Purchase Material, Sell Project (via `navIntent`).
-- DIRECT_SALE actions: Record Sale, View Profit.
-- Secondary row: **+ Collection**, Activity Log, Edit, Delete (`ProjectQuickEntry` for expense/collection/payment).
+- **Project Detail workspace:** Overview + Financial Summary always visible; tabs: Construction | Funding | Inventory | Procurement | Labour | Expenses | Sales | Profitability | Activity | Documents.
+- Common card actions (primary): **View · Expense · Payment · Collection · Stage Update** (DEVELOPMENT).
+- DEVELOPMENT secondary: Issue Material, Add Labour, Purchase Material, Sell Project.
+- DIRECT_SALE: Record Sale, View Profit.
+- Secondary row: Activity, Upload Document (P5 stub), Edit, Delete / Restore.
 - **+ Collection** modes: Installment payment vs Full / direct payment (sale picker; amount capped to balance due).
 - Prefer short `placeholder` hints on text/number inputs (name, budget, etc.).
 - **FieldLabel:** form labels include a small **(i)** tip (hover/focus) explaining the field — used on Projects create/edit and Project Detail stage/sell forms.

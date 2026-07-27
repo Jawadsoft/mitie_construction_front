@@ -64,6 +64,7 @@ export default function ProjectActivityLog({ projectId, projectName, onClose }: 
       title={`Activity Log${projectName || data?.project_name ? ` — ${projectName || data?.project_name}` : ''}`}
       onClose={onClose}
       size="xl"
+      mode="view"
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

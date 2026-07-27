@@ -18,6 +18,10 @@ let JournalEntry = class JournalEntry {
     description;
     status;
     project_id;
+    created_by;
+    updated_by;
+    posted_by;
+    posted_at;
     created_at;
     updated_at;
 };
@@ -46,6 +50,22 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
     __metadata("design:type", Object)
 ], JournalEntry.prototype, "project_id", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], JournalEntry.prototype, "created_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], JournalEntry.prototype, "updated_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], JournalEntry.prototype, "posted_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Object)
+], JournalEntry.prototype, "posted_at", void 0);
 __decorate([
     (0, typeorm_1.Column)({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }),
     __metadata("design:type", Date)

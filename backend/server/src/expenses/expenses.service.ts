@@ -45,7 +45,7 @@ export class ExpensesService {
     return 'DIRECT';
   }
 
-  async create(dto: Partial<Expense>) {
+  async create(dto: Partial<Expense>, userId?: string) {
     const required = ['project_id', 'project_stage_id', 'category', 'vendor_type', 'expense_date', 'amount'];
     for (const field of required) {
       if (!dto[field as keyof Expense]) {
@@ -77,6 +77,8 @@ export class ExpensesService {
           amount,
           paid_amount,
           status,
+          created_by: userId ?? null,
+          updated_by: userId ?? null,
         }),
       );
       await this.accounting.postExpenseJournal(expense, manager);
@@ -154,7 +156,7 @@ export class ExpensesService {
     });
   }
 
-  async update(id: string, dto: Partial<Expense>) {
+  async update(id: string, dto: Partial<Expense>, userId?: string) {
     return this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(Expense);
       const expense = await repo.findOne({ where: { id } });
@@ -234,6 +236,7 @@ export class ExpensesService {
         paid_amount,
         status,
         ...(dto.description !== undefined ? { description: dto.description || null } : {}),
+        ...(userId ? { updated_by: userId } : {}),
       });
 
       const updated = await repo.findOne({ where: { id } });

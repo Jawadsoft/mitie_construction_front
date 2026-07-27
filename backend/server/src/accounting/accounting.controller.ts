@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -62,8 +62,8 @@ export class AccountingController {
   @Post('journal/:id/post')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(...WRITE_ROLES)
-  postJournalEntry(@Param('id') id: string) {
-    return this.svc.postJournalEntry(id);
+  postJournalEntry(@Param('id') id: string, @Req() req: { user?: { userId?: string } }) {
+    return this.svc.postJournalEntry(id, undefined, req.user?.userId);
   }
 
   @Patch('journal/:id')

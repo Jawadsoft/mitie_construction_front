@@ -38,6 +38,9 @@ let Project = class Project {
     sold_notes;
     created_at;
     updated_at;
+    created_by;
+    updated_by;
+    deleted_at;
     stages;
 };
 exports.Project = Project;
@@ -145,6 +148,18 @@ __decorate([
     }),
     __metadata("design:type", Date)
 ], Project.prototype, "updated_at", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "created_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "updated_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "deleted_at", void 0);
 __decorate([
     (0, typeorm_1.OneToMany)(() => project_stage_entity_1.ProjectStage, (stage) => stage.project),
     __metadata("design:type", Array)

@@ -11,12 +11,47 @@ import type { Project } from '../api/projects';
 import { getBankAccounts } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
 import Modal from '../components/Modal';
+import ModalFormFooter from '../components/ModalFormFooter';
 import StatCard from '../components/StatCard';
 import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from '../components/DetailDrawer';
-import { useConfirm } from '../components/ConfirmDialog';
+import { useConfirm, useRegisterUnsaved } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { formatDate } from '../utils/date';
 import type { NavIntent } from '../types/navIntent';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import { useListFilters } from '../utils/navState';
+import { useColumnPrefs } from '../utils/columnPrefs';
+import ColumnPicker from '../components/ColumnPicker';
+
+const SALES_TABLE_COLUMNS = [
+  { id: 'id', label: 'Sale ID' },
+  { id: 'customer', label: 'Customer' },
+  { id: 'unit', label: 'Unit' },
+  { id: 'date', label: 'Date' },
+  { id: 'price', label: 'Price' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'status', label: 'Status' },
+  { id: 'actions', label: 'Actions' },
+];
+const SALES_COL_IDS = SALES_TABLE_COLUMNS.map((c) => c.id);
+
+const emptyUnitForm = {
+  project_id: '',
+  unit_number: '',
+  unit_type: '',
+  area_sqft: '',
+  floor: '',
+  list_price: '',
+  notes: '',
+};
+const emptySaleForm = () => ({
+  property_unit_id: '',
+  customer_id: '',
+  sale_date: new Date().toISOString().split('T')[0],
+  total_sale_price: '',
+  notes: '',
+});
+const emptyCustForm = { name: '', phone: '', email: '', cnic: '', address: '' };
 
 function bankLabel(b: BankAccount) {
   if (b.bank_name && b.name && b.bank_name.toLowerCase() !== b.name.toLowerCase()) {
@@ -49,7 +84,17 @@ export default function SalesPage({
   onIntentConsumed?: () => void;
 } = {}) {
   const confirm = useConfirm();
-  const [tab, setTab] = useState<Tab>('inventory');
+  const { filters, setFilter } = useListFilters('sales', ['tab', 'project']);
+  const tab = (['inventory', 'sales', 'customers', 'collections'].includes(filters.tab)
+    ? filters.tab
+    : 'inventory') as Tab;
+  const setTab = (t: Tab) => setFilter('tab', t === 'inventory' ? '' : t);
+  const saleFilterProjectId = filters.project ?? '';
+  const setSaleFilterProjectId = (v: string) => setFilter('project', v);
+  const { visible: salesCols, isVisible: salesVis, toggle: toggleSalesCol } = useColumnPrefs(
+    'sales.list',
+    SALES_COL_IDS,
+  );
   const [units, setUnits] = useState<PropertyUnit[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -78,11 +123,14 @@ export default function SalesPage({
     } catch { setDrawerCustomerSales([]); }
     finally { setDrawerLoading(false); }
   };
-  const [unitForm, setUnitForm] = useState({ project_id: '', unit_number: '', unit_type: '', area_sqft: '', floor: '', list_price: '', notes: '' });
-  const [custForm, setCustForm] = useState({ name: '', phone: '', email: '', cnic: '', address: '' });
-  const [saleForm, setSaleForm] = useState({ property_unit_id: '', customer_id: '', sale_date: new Date().toISOString().split('T')[0], total_sale_price: '', notes: '' });
-  const [saleFilterProjectId, setSaleFilterProjectId] = useState('');
+  const [unitForm, setUnitForm] = useState(emptyUnitForm);
+  const [unitBaseline, setUnitBaseline] = useState(emptyUnitForm);
+  const [custForm, setCustForm] = useState(emptyCustForm);
+  const [custBaseline, setCustBaseline] = useState(emptyCustForm);
+  const [saleForm, setSaleForm] = useState(emptySaleForm);
+  const [saleBaseline, setSaleBaseline] = useState(emptySaleForm());
   const [installForms, setInstallForms] = useState([{ due_date: '', due_amount: '' }]);
+  const [installBaseline, setInstallBaseline] = useState([{ due_date: '', due_amount: '' }]);
   const [payForm, setPayForm] = useState({
     sale_id: '',
     paid_amount: '',
@@ -125,14 +173,12 @@ export default function SalesPage({
     if (!initialIntent?.action || initialIntent.action !== 'record-sale' || !initialIntent.projectId) return;
     setTab('sales');
     setSaleFilterProjectId(initialIntent.projectId);
-    setSaleForm({
-      property_unit_id: '',
-      customer_id: '',
-      sale_date: new Date().toISOString().split('T')[0],
-      total_sale_price: '',
-      notes: '',
-    });
-    setInstallForms([{ due_date: '', due_amount: '' }]);
+    const nextSale = emptySaleForm();
+    const nextInstall = [{ due_date: '', due_amount: '' }];
+    setSaleForm(nextSale);
+    setSaleBaseline(nextSale);
+    setInstallForms(nextInstall);
+    setInstallBaseline(nextInstall);
     setError('');
     setShowModal('sale');
     onIntentConsumed?.();
@@ -140,32 +186,53 @@ export default function SalesPage({
 
   const openEditUnit = (u: PropertyUnit) => {
     setEditingUnit(u);
-    setUnitForm({ project_id: u.project_id, unit_number: u.unit_number, unit_type: u.unit_type ?? '', area_sqft: u.area_sqft ?? '', floor: u.floor ?? '', list_price: u.list_price, notes: u.notes ?? '' });
+    const next = {
+      project_id: u.project_id,
+      unit_number: u.unit_number,
+      unit_type: u.unit_type ?? '',
+      area_sqft: u.area_sqft ?? '',
+      floor: u.floor ?? '',
+      list_price: u.list_price,
+      notes: u.notes ?? '',
+    };
+    setUnitForm(next);
+    setUnitBaseline(next);
     setShowModal('unit');
   };
 
   const openEditCustomer = (c: Customer) => {
     setEditingCustomer(c);
-    setCustForm({ name: c.name, phone: c.phone ?? '', email: c.email ?? '', cnic: c.cnic ?? '', address: c.address ?? '' });
+    const next = {
+      name: c.name,
+      phone: c.phone ?? '',
+      email: c.email ?? '',
+      cnic: c.cnic ?? '',
+      address: c.address ?? '',
+    };
+    setCustForm(next);
+    setCustBaseline(next);
     setShowModal('customer');
   };
 
   const handleSaveUnit = async () => {
-    if (!unitForm.project_id || !unitForm.unit_number || !unitForm.list_price) { setError('Project, unit number, and price are required'); return; }
+    if (!unitForm.project_id || !unitForm.unit_number || !unitForm.list_price) {
+      setError('Project, unit number, and price are required');
+      throw new Error('validation');
+    }
     setError('');
     try {
       if (editingUnit) { await updatePropertyUnit(editingUnit.id, unitForm as any); } else { await createPropertyUnit(unitForm as any); }
       setEditingUnit(null); setShowModal(''); load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(e.message); throw e; }
   };
 
   const handleSaveCustomer = async () => {
-    if (!custForm.name) { setError('Name is required'); return; }
+    if (!custForm.name) { setError('Name is required'); throw new Error('validation'); }
     setError('');
     try {
       if (editingCustomer) { await updateCustomer(editingCustomer.id, custForm); } else { await createCustomer(custForm); }
       setEditingCustomer(null); setShowModal(''); load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(e.message); throw e; }
   };
 
   const handleDeleteUnit = async (id: string) => {
@@ -250,14 +317,36 @@ export default function SalesPage({
   };
 
   const handleSaveSale = async () => {
-    if (!saleForm.property_unit_id || !saleForm.customer_id || !saleForm.total_sale_price) { setError('Unit, customer, and price are required'); return; }
+    if (!saleForm.property_unit_id || !saleForm.customer_id || !saleForm.total_sale_price) {
+      setError('Unit, customer, and price are required');
+      throw new Error('validation');
+    }
     setError('');
     try {
       await createSale({ sale: saleForm as any, installments: installForms.filter(i => i.due_date && i.due_amount) as any });
       setShowModal(''); load();
       notify.success('Sale created');
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(e.message); throw e; }
   };
+
+  useRegisterUnsaved({
+    active: showModal === 'unit',
+    isDirty: isFormDirty(unitForm, unitBaseline),
+    onSave: handleSaveUnit,
+    onDiscard: () => { setShowModal(''); setEditingUnit(null); },
+  });
+  useRegisterUnsaved({
+    active: showModal === 'customer',
+    isDirty: isFormDirty(custForm, custBaseline),
+    onSave: handleSaveCustomer,
+    onDiscard: () => { setShowModal(''); setEditingCustomer(null); },
+  });
+  useRegisterUnsaved({
+    active: showModal === 'sale',
+    isDirty: isFormDirty(saleForm, saleBaseline) || isFormDirty(installForms, installBaseline),
+    onSave: handleSaveSale,
+    onDiscard: () => { setShowModal(''); setSaleFilterProjectId(''); },
+  });
 
   const openCollect = (sale?: Sale) => {
     const target = sale ?? outstandingSales[0];
@@ -557,9 +646,51 @@ export default function SalesPage({
               ↓ Excel
             </button>
           </>}
-          {tab === 'inventory' && <button onClick={() => { setEditingUnit(null); setUnitForm({ project_id: '', unit_number: '', unit_type: '', area_sqft: '', floor: '', list_price: '', notes: '' }); setError(''); setShowModal('unit'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Unit</button>}
-          {tab === 'customers' && <button onClick={() => { setEditingCustomer(null); setCustForm({ name: '', phone: '', email: '', cnic: '', address: '' }); setError(''); setShowModal('customer'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ Add Customer</button>}
-          {tab === 'sales' && <button onClick={() => { setError(''); setShowModal('sale'); }} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium">+ New Sale</button>}
+          {tab === 'inventory' && (
+            <button
+              onClick={() => {
+                setEditingUnit(null);
+                setUnitForm(emptyUnitForm);
+                setUnitBaseline(emptyUnitForm);
+                setError('');
+                setShowModal('unit');
+              }}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium"
+            >
+              + Add Unit
+            </button>
+          )}
+          {tab === 'customers' && (
+            <button
+              onClick={() => {
+                setEditingCustomer(null);
+                setCustForm(emptyCustForm);
+                setCustBaseline(emptyCustForm);
+                setError('');
+                setShowModal('customer');
+              }}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium"
+            >
+              + Add Customer
+            </button>
+          )}
+          {tab === 'sales' && (
+            <button
+              onClick={() => {
+                const nextSale = emptySaleForm();
+                const nextInstall = [{ due_date: '', due_amount: '' }];
+                setSaleForm(nextSale);
+                setSaleBaseline(nextSale);
+                setInstallForms(nextInstall);
+                setInstallBaseline(nextInstall);
+                setError('');
+                setShowModal('sale');
+              }}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium"
+            >
+              + New Sale
+            </button>
+          )}
         </div>
       </div>
 
@@ -625,41 +756,48 @@ export default function SalesPage({
           ))}
         </div>
       ) : tab === 'sales' ? (
-        <div className="bg-white rounded-xl border overflow-hidden">
+        <div className="space-y-2">
+          <div className="flex justify-end">
+            <ColumnPicker columns={SALES_TABLE_COLUMNS} visible={salesCols} onToggle={toggleSalesCol} />
+          </div>
+          <div className="bg-white rounded-xl border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-gray-600">Sale ID</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Customer</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Unit</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Date</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Price</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Paid</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Status</th>
-                  <th className="px-4 py-3 text-center text-gray-600">Actions</th>
+                  {salesVis('id') && <th className="px-4 py-3 text-left text-gray-600">Sale ID</th>}
+                  {salesVis('customer') && <th className="px-4 py-3 text-left text-gray-600">Customer</th>}
+                  {salesVis('unit') && <th className="px-4 py-3 text-left text-gray-600">Unit</th>}
+                  {salesVis('date') && <th className="px-4 py-3 text-left text-gray-600">Date</th>}
+                  {salesVis('price') && <th className="px-4 py-3 text-right text-gray-600">Price</th>}
+                  {salesVis('paid') && <th className="px-4 py-3 text-right text-gray-600">Paid</th>}
+                  {salesVis('status') && <th className="px-4 py-3 text-left text-gray-600">Status</th>}
+                  {salesVis('actions') && <th className="px-4 py-3 text-center text-gray-600">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {sales.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center text-gray-400 py-8">No sales yet.</td></tr>
+                  <tr><td colSpan={salesCols.length} className="text-center text-gray-400 py-8">No sales yet.</td></tr>
                 ) : sales.map(s => (
                   <tr key={s.id} className="border-t hover:bg-blue-50 cursor-pointer" onClick={() => viewSale(s.id)}>
-                    <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
-                    <td className="px-4 py-3">{s.customer?.name ?? '-'}</td>
-                    <td className="px-4 py-3">{s.property_unit?.unit_number ?? '-'}</td>
-                    <td className="px-4 py-3">{formatDate(s.sale_date)}</td>
-                    <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
-                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[s.status]}`}>{s.status}</span></td>
-                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => handleDeleteSale(s.id)} className="text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">Del</button>
-                    </td>
+                    {salesVis('id') && <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>}
+                    {salesVis('customer') && <td className="px-4 py-3">{s.customer?.name ?? '-'}</td>}
+                    {salesVis('unit') && <td className="px-4 py-3">{s.property_unit?.unit_number ?? '-'}</td>}
+                    {salesVis('date') && <td className="px-4 py-3">{formatDate(s.sale_date)}</td>}
+                    {salesVis('price') && <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>}
+                    {salesVis('paid') && <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>}
+                    {salesVis('status') && <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[s.status]}`}>{s.status}</span></td>}
+                    {salesVis('actions') && (
+                      <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => handleDeleteSale(s.id)} className="text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">Del</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -789,9 +927,20 @@ export default function SalesPage({
       )}
 
       {showModal === 'unit' && (
-        <Modal title={editingUnit ? 'Edit Property Unit' : 'Add Property Unit'} onClose={() => { setShowModal(''); setEditingUnit(null); }}>
+        <Modal
+          title={editingUnit ? 'Edit Property Unit' : 'Add Property Unit'}
+          mode="form"
+          isDirty={isFormDirty(unitForm, unitBaseline)}
+          onClose={() => { setShowModal(''); setEditingUnit(null); }}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSaveUnit()}
+              saveLabel={editingUnit ? 'Save Unit' : 'Add Unit'}
+              error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Project *</label>
               <select value={unitForm.project_id} onChange={e => setUnitForm(f => ({ ...f, project_id: e.target.value }))}
@@ -814,15 +963,25 @@ export default function SalesPage({
               <input type="number" value={unitForm.list_price} onChange={e => setUnitForm(f => ({ ...f, list_price: e.target.value }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
             </div>
-            <button onClick={handleSaveUnit} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Add Unit</button>
           </div>
         </Modal>
       )}
 
       {showModal === 'customer' && (
-        <Modal title={editingCustomer ? 'Edit Customer' : 'Add Customer'} onClose={() => { setShowModal(''); setEditingCustomer(null); }}>
+        <Modal
+          title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
+          mode="form"
+          isDirty={isFormDirty(custForm, custBaseline)}
+          onClose={() => { setShowModal(''); setEditingCustomer(null); }}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSaveCustomer()}
+              saveLabel={editingCustomer ? 'Save Customer' : 'Add Customer'}
+              error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
             {[{ label: 'Name *', key: 'name', type: 'text' }, { label: 'Phone', key: 'phone', type: 'text' }, { label: 'Email', key: 'email', type: 'email' }, { label: 'CNIC', key: 'cnic', type: 'text' }].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
@@ -830,15 +989,27 @@ export default function SalesPage({
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
             ))}
-            <button onClick={handleSaveCustomer} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Add Customer</button>
           </div>
         </Modal>
       )}
 
       {showModal === 'sale' && (
-        <Modal title="New Sale" onClose={() => { setShowModal(''); setSaleFilterProjectId(''); }}>
+        <Modal
+          title="New Sale"
+          mode="form"
+          isDirty={
+            isFormDirty(saleForm, saleBaseline) || isFormDirty(installForms, installBaseline)
+          }
+          onClose={() => { setShowModal(''); setSaleFilterProjectId(''); }}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSaveSale()}
+              saveLabel="Create Sale"
+              error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Property Unit *</label>
               <select value={saleForm.property_unit_id} onChange={e => setSaleForm(f => ({ ...f, property_unit_id: e.target.value }))}
@@ -898,7 +1069,7 @@ export default function SalesPage({
                 ))}
               </div>
             </div>
-            <button onClick={handleSaveSale} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Create Sale</button>
+            <button type="button" onClick={handleSaveSale} className="hidden" />
           </div>
         </Modal>
       )}

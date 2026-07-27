@@ -5,7 +5,8 @@ export type NavQuickAction =
   | 'purchase-material'
   | 'add-labour'
   | 'record-sale'
-  | 'view-profit';
+  | 'view-profit'
+  | 'view-activity';
 
 export type NavIntent = {
   projectId?: string;

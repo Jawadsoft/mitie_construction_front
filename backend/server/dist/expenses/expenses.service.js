@@ -57,7 +57,7 @@ let ExpensesService = class ExpensesService {
             return 'BILL';
         return 'DIRECT';
     }
-    async create(dto) {
+    async create(dto, userId) {
         const required = ['project_id', 'project_stage_id', 'category', 'vendor_type', 'expense_date', 'amount'];
         for (const field of required) {
             if (!dto[field]) {
@@ -85,6 +85,8 @@ let ExpensesService = class ExpensesService {
                 amount,
                 paid_amount,
                 status,
+                created_by: userId ?? null,
+                updated_by: userId ?? null,
             }));
             await this.accounting.postExpenseJournal(expense, manager);
             return expense;
@@ -140,7 +142,7 @@ let ExpensesService = class ExpensesService {
             return { expense: updated, payment };
         });
     }
-    async update(id, dto) {
+    async update(id, dto, userId) {
         return this.dataSource.transaction(async (manager) => {
             const repo = manager.getRepository(expense_entity_1.Expense);
             const expense = await repo.findOne({ where: { id } });
@@ -209,6 +211,7 @@ let ExpensesService = class ExpensesService {
                 paid_amount,
                 status,
                 ...(dto.description !== undefined ? { description: dto.description || null } : {}),
+                ...(userId ? { updated_by: userId } : {}),
             });
             const updated = await repo.findOne({ where: { id } });
             if (!updated)

@@ -6,7 +6,7 @@ import {
   type MeasurementSettings,
   type MeasurementStandard,
 } from '../api/settings';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import Modal, { useModalRequestClose } from '../components/Modal';
 import { GAZZ_SQFT, PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
 import { notify, notifyError } from '../utils/toast';
 
@@ -92,8 +92,6 @@ export default function SettingsPage() {
   const [customMarla, setCustomMarla] = useState(String(PAKISTAN_MARLA_SQFT));
   const [measurementLoading, setMeasurementLoading] = useState(true);
   const [measurementSaving, setMeasurementSaving] = useState(false);
-
-  useBodyScrollLock(selected !== null);
 
   useEffect(() => {
     setMeasurementLoading(true);
@@ -316,52 +314,64 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Confirmation dialog */}
       {selected && selectedOption && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className={`px-6 py-4 ${selectedOption.color === 'red' ? 'bg-red-600' : 'bg-orange-500'}`}>
-              <h2 className="text-white font-bold text-base">Confirm: {selectedOption.title}</h2>
-              <p className="text-white/80 text-xs mt-1">This cannot be undone.</p>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              <p className="text-sm text-slate-700">
-                You are about to permanently delete data. Type{' '}
-                <span className="font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">RESET</span>{' '}
-                in the box below to confirm.
-              </p>
-              <input
-                type="text"
-                value={confirmText}
-                onChange={e => setConfirmText(e.target.value)}
-                placeholder="Type RESET to confirm"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
-                autoFocus
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={cancel}
-                  disabled={loading}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleReset}
-                  disabled={!canConfirm || loading}
-                  className={`flex-1 py-2.5 rounded-lg text-sm font-semibold text-white disabled:opacity-40 transition-colors ${
-                    selectedOption.color === 'red'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-orange-500 hover:bg-orange-600'
-                  }`}
-                >
-                  {loading ? 'Resetting…' : 'Confirm Reset'}
-                </button>
-              </div>
-            </div>
+        <Modal
+          title={`Confirm: ${selectedOption.title}`}
+          mode="form"
+          isDirty={confirmText.length > 0}
+          onClose={cancel}
+          footer={<SettingsResetFooter loading={loading} canConfirm={canConfirm} onConfirm={handleReset} />}
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500">This cannot be undone.</p>
+            <p className="text-sm text-slate-700">
+              You are about to permanently delete data. Type{' '}
+              <span className="font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">RESET</span>{' '}
+              in the box below to confirm.
+            </p>
+            <input
+              type="text"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder="Type RESET to confirm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
+              autoFocus
+            />
           </div>
-        </div>
+        </Modal>
       )}
+    </div>
+  );
+}
+
+function SettingsResetFooter({
+  loading,
+  canConfirm,
+  onConfirm,
+}: {
+  loading: boolean;
+  canConfirm: boolean;
+  onConfirm: () => void;
+}) {
+  const requestClose = useModalRequestClose();
+  return (
+    <div className="flex gap-3">
+      <button
+        type="button"
+        onClick={requestClose}
+        disabled={loading}
+        className="flex-1 py-2.5 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 transition-colors"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={!canConfirm || loading}
+        className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40 transition-colors"
+      >
+        {loading ? 'Resetting…' : 'Confirm Reset'}
+      </button>
     </div>
   );
 }

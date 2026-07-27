@@ -14,12 +14,17 @@ const expense_payment_entity_1 = require("./entities/expense-payment.entity");
 const expenses_service_1 = require("./expenses.service");
 const expenses_controller_1 = require("./expenses.controller");
 const accounting_module_1 = require("../accounting/accounting.module");
+const auth_module_1 = require("../auth/auth.module");
 let ExpensesModule = class ExpensesModule {
 };
 exports.ExpensesModule = ExpensesModule;
 exports.ExpensesModule = ExpensesModule = __decorate([
     (0, common_1.Module)({
-        imports: [typeorm_1.TypeOrmModule.forFeature([expense_entity_1.Expense, expense_payment_entity_1.ExpensePayment]), accounting_module_1.AccountingModule],
+        imports: [
+            auth_module_1.AuthModule,
+            typeorm_1.TypeOrmModule.forFeature([expense_entity_1.Expense, expense_payment_entity_1.ExpensePayment]),
+            accounting_module_1.AccountingModule,
+        ],
         controllers: [expenses_controller_1.ExpensesController],
         providers: [expenses_service_1.ExpensesService],
         exports: [expenses_service_1.ExpensesService, typeorm_1.TypeOrmModule],

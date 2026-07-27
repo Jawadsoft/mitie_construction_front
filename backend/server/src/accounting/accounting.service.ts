@@ -284,13 +284,17 @@ export class AccountingService implements OnModuleInit {
     return this.findJournalEntry(je.id);
   }
 
-  async postJournalEntry(id: string, manager?: EntityManager) {
+  async postJournalEntry(id: string, manager?: EntityManager, userId?: string) {
     const jeRepo = manager ? manager.getRepository(JournalEntry) : this.jeRepo;
     const jelRepo = manager ? manager.getRepository(JournalEntryLine) : this.jelRepo;
     const je = await jeRepo.findOne({ where: { id } });
     if (!je) throw new NotFoundException('Journal entry not found');
     if (je.status === 'Posted') throw new BadRequestException('Entry is already posted');
-    await jeRepo.update(id, { status: 'Posted' });
+    await jeRepo.update(id, {
+      status: 'Posted',
+      posted_at: new Date(),
+      ...(userId ? { posted_by: userId } : {}),
+    });
     if (manager) {
       const lines = await jelRepo.find({ where: { journal_entry_id: id } });
       return { ...je, status: 'Posted' as const, lines };

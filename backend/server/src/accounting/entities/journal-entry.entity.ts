@@ -20,6 +20,18 @@ export class JournalEntry {
   @Column({ type: 'bigint', unsigned: true, nullable: true })
   project_id: string | null;
 
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  created_by: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  updated_by: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  posted_by: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  posted_at: Date | null;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 

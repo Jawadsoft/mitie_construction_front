@@ -30,6 +30,8 @@ let Expense = class Expense {
     cash_transaction_id;
     created_at;
     updated_at;
+    created_by;
+    updated_by;
 };
 exports.Expense = Expense;
 __decorate([
@@ -104,6 +106,14 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' }),
     __metadata("design:type", Date)
 ], Expense.prototype, "updated_at", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], Expense.prototype, "created_by", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'bigint', unsigned: true, nullable: true }),
+    __metadata("design:type", Object)
+], Expense.prototype, "updated_by", void 0);
 exports.Expense = Expense = __decorate([
     (0, typeorm_1.Entity)('expenses')
 ], Expense);

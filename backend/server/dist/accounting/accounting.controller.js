@@ -47,8 +47,8 @@ let AccountingController = class AccountingController {
             default_collection_bank_id: body?.default_collection_bank_id ?? null,
         });
     }
-    postJournalEntry(id) {
-        return this.svc.postJournalEntry(id);
+    postJournalEntry(id, req) {
+        return this.svc.postJournalEntry(id, undefined, req.user?.userId);
     }
     updateJournalEntry(id, dto) {
         return this.svc.updateJournalEntry(id, dto);
@@ -165,8 +165,9 @@ __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, roles_decorator_1.Roles)(...WRITE_ROLES),
     __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], AccountingController.prototype, "postJournalEntry", null);
 __decorate([

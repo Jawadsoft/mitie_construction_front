@@ -116,11 +116,22 @@ let ProjectsService = class ProjectsService {
             actual_cost: actuals.get(String(s.id)) ?? 0,
         }));
     }
-    async findAll() {
-        const projects = await this.projectsRepo.find({
-            relations: ['stages', 'stages.budget'],
-            order: { created_at: 'DESC' },
-        });
+    async findAll(lifecycle = 'active') {
+        const qb = this.projectsRepo
+            .createQueryBuilder('p')
+            .leftJoinAndSelect('p.stages', 'stages')
+            .leftJoinAndSelect('stages.budget', 'budget')
+            .orderBy('p.created_at', 'DESC');
+        if (lifecycle === 'deleted') {
+            qb.where('p.deleted_at IS NOT NULL');
+        }
+        else if (lifecycle === 'archived') {
+            qb.where('p.deleted_at IS NULL').andWhere('p.status = :st', { st: 'Cancelled' });
+        }
+        else {
+            qb.where('p.deleted_at IS NULL');
+        }
+        const projects = await qb.getMany();
         const financials = await this.loadProjectFinancials();
         const enriched = [];
         for (const p of projects) {
@@ -356,7 +367,7 @@ let ProjectsService = class ProjectsService {
         }
         return String(n);
     }
-    async create(dto) {
+    async create(dto, userId) {
         if (!dto.name?.trim())
             throw new common_1.BadRequestException('name is required');
         this.assertValidStatus(dto.status);
@@ -385,6 +396,8 @@ let ProjectsService = class ProjectsService {
                 : undefined,
             status: dto.status || 'Planning',
             sold_as_is: false,
+            created_by: userId ?? null,
+            updated_by: userId ?? null,
         });
         const saved = await this.projectsRepo.save(project);
         if (tax.strategy === 'DEVELOPMENT') {
@@ -392,7 +405,7 @@ let ProjectsService = class ProjectsService {
         }
         return this.findOne(String(saved.id));
     }
-    async update(id, dto) {
+    async update(id, dto, userId) {
         const existing = await this.findOne(id);
         this.assertValidStatus(dto.status);
         const normalizedExisting = (0, project_taxonomy_1.normalizeTaxonomyInput)({
@@ -451,10 +464,26 @@ let ProjectsService = class ProjectsService {
             updateData.project_category = null;
             updateData.project_purpose = null;
         }
+        if (userId)
+            updateData.updated_by = userId;
         await this.projectsRepo.update(id, updateData);
         return this.findOne(id);
     }
     async remove(id) {
+        const project = await this.projectsRepo.findOne({ where: { id } });
+        if (!project)
+            throw new common_1.NotFoundException('Project not found');
+        await this.projectsRepo.update(id, { deleted_at: new Date() });
+        return { success: true, id, soft_deleted: true };
+    }
+    async restore(id) {
+        const project = await this.projectsRepo.findOne({ where: { id } });
+        if (!project)
+            throw new common_1.NotFoundException('Project not found');
+        await this.projectsRepo.update(id, { deleted_at: null });
+        return this.findOne(id);
+    }
+    async hardRemove(id) {
         await this.findOne(id);
         await this.dataSource.query(`
       WITH refs AS (

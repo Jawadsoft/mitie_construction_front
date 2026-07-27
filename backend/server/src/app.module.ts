@@ -18,6 +18,8 @@ import { ReportsModule } from './reports/reports.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SettingsModule } from './settings/settings.module';
 import { LandModule } from './land/land.module';
+import { SearchModule } from './search/search.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -58,6 +60,8 @@ import { LandModule } from './land/land.module';
     InventoryModule,
     SettingsModule,
     LandModule,
+    SearchModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

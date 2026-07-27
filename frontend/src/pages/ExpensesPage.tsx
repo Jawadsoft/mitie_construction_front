@@ -13,9 +13,28 @@ import { getBankAccounts } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
 import Modal from '../components/Modal';
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/DetailDrawer';
+import ColumnPicker from '../components/ColumnPicker';
 import { exportCSV, exportPDF } from '../utils/exportUtils';
-import { useConfirm } from '../components/ConfirmDialog';
+import { useConfirm, useRegisterUnsaved } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import ModalFormFooter from '../components/ModalFormFooter';
+import { useListFilters } from '../utils/navState';
+import { useColumnPrefs } from '../utils/columnPrefs';
+import { useFormDraft, peekFormDraft } from '../hooks/useFormDraft';
+import { TableSkeleton } from '../components/Skeleton';
+import { useEditLock } from '../hooks/useEditLock';
+
+const EXPENSE_COLUMNS = [
+  { id: 'date', label: 'Date' },
+  { id: 'category', label: 'Category' },
+  { id: 'mode', label: 'Mode' },
+  { id: 'status', label: 'Status' },
+  { id: 'amount', label: 'Amount' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'actions', label: 'Actions' },
+];
+const EXPENSE_COL_IDS = EXPENSE_COLUMNS.map((c) => c.id);
 
 const CATEGORIES = [
   'Land Purchase',
@@ -65,6 +84,10 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function ExpensesPage() {
   const confirm = useConfirm();
+  const { filters, setFilter } = useListFilters('expenses', ['project', 'status']);
+  const filterProject = filters.project ?? '';
+  const filterStatus = filters.status ?? '';
+  const { visible: colVisible, isVisible, toggle: toggleCol } = useColumnPrefs('expenses', EXPENSE_COL_IDS);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -76,12 +99,20 @@ export default function ExpensesPage() {
   const [paying, setPaying] = useState<Expense | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [error, setError] = useState('');
-  const [filterProject, setFilterProject] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
   const [form, setForm] = useState(emptyForm);
+  const [formBaseline, setFormBaseline] = useState(emptyForm);
   const [payForm, setPayForm] = useState(emptyPayForm);
+  const [payBaseline, setPayBaseline] = useState(emptyPayForm);
   const [stages, setStages] = useState<{ id: string; name: string }[]>([]);
   const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
+
+  const createDirty = !editing && isFormDirty(form, emptyForm);
+  const { draftSaved, clear: clearDraft } = useFormDraft({
+    key: 'expenses.create',
+    enabled: showModal && !editing,
+    values: form,
+    isDirty: createDirty,
+  });
 
   const load = async () => {
     setLoading(true);
@@ -108,26 +139,43 @@ export default function ExpensesPage() {
     } else { setStages([]); }
   }, [form.project_id]);
 
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setError(''); setShowModal(true); };
+  const openCreate = () => {
+    setEditing(null);
+    const draft = peekFormDraft<typeof emptyForm>('expenses.create');
+    if (draft) {
+      setForm(draft);
+      setFormBaseline(emptyForm);
+      notify.info('Draft restored');
+    } else {
+      setForm(emptyForm);
+      setFormBaseline(emptyForm);
+    }
+    setError('');
+    setShowModal(true);
+  };
 
   const openEdit = (e: Expense) => {
     setEditing(e);
-    setForm({
+    const next = {
       project_id: e.project_id, project_stage_id: e.project_stage_id,
       category: e.category, vendor_type: e.vendor_type,
       supplier_id: e.supplier_id ?? '', contractor_id: e.contractor_id ?? '',
-      entry_mode: (e.entry_mode === 'BILL' ? 'BILL' : 'DIRECT'),
+      entry_mode: (e.entry_mode === 'BILL' ? 'BILL' : 'DIRECT') as 'DIRECT' | 'BILL',
       payment_type: e.payment_type, bank_account_id: e.bank_account_id ?? '',
       expense_date: e.expense_date,
       amount: e.amount, description: e.description ?? '',
-    });
+    };
+    setForm(next);
+    setFormBaseline(next);
     setError(''); setShowModal(true);
   };
 
   const openPay = (e: Expense) => {
     const bal = Math.max(0, Number(e.amount) - Number(e.paid_amount || 0));
     setPaying(e);
-    setPayForm({ ...emptyPayForm, amount: String(bal) });
+    const next = { ...emptyPayForm, amount: String(bal) };
+    setPayForm(next);
+    setPayBaseline(next);
     setError('');
     setShowPayModal(true);
   };
@@ -149,23 +197,57 @@ export default function ExpensesPage() {
       } as any;
       if (!editing && form.entry_mode === 'DIRECT' && needsBank(form.payment_type) && !form.bank_account_id) {
         setError('Select a partner bank for Bank Transfer / Cheque');
-        return;
+        throw new Error('validation');
       }
       if (editing) {
         await updateExpense(editing.id, payload);
+        setShowModal(false);
+        load();
+        notify.success('Expense updated');
       } else {
-        await createExpense(payload);
+        const tempId = `temp-${Date.now()}`;
+        const optimistic: Expense = {
+          id: tempId,
+          project_id: form.project_id,
+          project_stage_id: form.project_stage_id,
+          category: form.category,
+          vendor_type: form.vendor_type as Expense['vendor_type'],
+          supplier_id: payload.supplier_id ?? null,
+          contractor_id: payload.contractor_id ?? null,
+          entry_mode: form.entry_mode,
+          payment_type: payload.payment_type,
+          bank_account_id: payload.bank_account_id,
+          expense_date: form.expense_date,
+          amount: form.amount,
+          paid_amount: form.entry_mode === 'BILL' ? '0' : form.amount,
+          status: form.entry_mode === 'BILL' ? 'Unpaid' : 'Paid',
+          description: form.description || null,
+        };
+        setExpenses((prev) => [optimistic, ...prev]);
+        setShowModal(false);
+        clearDraft();
+        notify.success('Expense added');
+        try {
+          const created = await createExpense(payload);
+          setExpenses((prev) => prev.map((e) => (e.id === tempId ? created : e)));
+        } catch (err) {
+          setExpenses((prev) => prev.filter((e) => e.id !== tempId));
+          notifyError(err, 'Failed to save expense');
+          throw err;
+        }
       }
-      setShowModal(false); load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      if (e?.message !== 'validation') setError(e.message);
+      throw e;
+    }
   };
 
   const handlePay = async () => {
     if (!paying) return;
-    if (!payForm.amount) { setError('Amount is required'); return; }
+    if (!payForm.amount) { setError('Amount is required'); throw new Error('validation'); }
     if (needsBank(payForm.payment_method) && !payForm.bank_account_id) {
       setError('Select a partner bank for Bank Transfer / Cheque');
-      return;
+      throw new Error('validation');
     }
     setError('');
     try {
@@ -179,8 +261,31 @@ export default function ExpensesPage() {
       setShowPayModal(false);
       setPaying(null);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      setError(e.message);
+      throw e;
+    }
   };
+
+  const expenseDirty = isFormDirty(form, formBaseline);
+  const payDirty = isFormDirty(payForm, payBaseline);
+  const { conflict: expenseEditConflict } = useEditLock('expenses', editing?.id, showModal && !!editing);
+
+  useRegisterUnsaved({
+    active: showModal,
+    isDirty: expenseDirty,
+    onSave: handleSave,
+    onDiscard: () => {
+      if (!editing) clearDraft();
+      setShowModal(false);
+    },
+  });
+  useRegisterUnsaved({
+    active: showPayModal,
+    isDirty: payDirty,
+    onSave: handlePay,
+    onDiscard: () => { setShowPayModal(false); setPaying(null); },
+  });
 
   const handleDelete = async (id: string) => {
     const ok = await confirm({
@@ -240,19 +345,22 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
-        <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)}
+      <div className="flex gap-3 flex-wrap items-center">
+        <select value={filterProject} onChange={(e) => setFilter('project', e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
           <option value="">All Projects</option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+        <select value={filterStatus} onChange={(e) => setFilter('status', e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
           <option value="">All statuses</option>
           <option value="Unpaid">Unpaid bills</option>
           <option value="Partial">Partial</option>
           <option value="Paid">Paid</option>
         </select>
+        <div className="ml-auto">
+          <ColumnPicker columns={EXPENSE_COLUMNS} visible={colVisible} onToggle={toggleCol} />
+        </div>
       </div>
 
       {error && !showModal && !showPayModal && (
@@ -260,54 +368,62 @@ export default function ExpensesPage() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+        <TableSkeleton rows={8} cols={7} />
       ) : (
         <div className="bg-white rounded-xl border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-gray-600">Date</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Category</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Mode</th>
-                  <th className="px-4 py-3 text-left text-gray-600">Status</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Amount</th>
-                  <th className="px-4 py-3 text-right text-gray-600">Paid</th>
-                  <th className="px-4 py-3 text-center text-gray-600">Actions</th>
+                  {isVisible('date') && <th className="px-4 py-3 text-left text-gray-600">Date</th>}
+                  {isVisible('category') && <th className="px-4 py-3 text-left text-gray-600">Category</th>}
+                  {isVisible('mode') && <th className="px-4 py-3 text-left text-gray-600">Mode</th>}
+                  {isVisible('status') && <th className="px-4 py-3 text-left text-gray-600">Status</th>}
+                  {isVisible('amount') && <th className="px-4 py-3 text-right text-gray-600">Amount</th>}
+                  {isVisible('paid') && <th className="px-4 py-3 text-right text-gray-600">Paid</th>}
+                  {isVisible('actions') && <th className="px-4 py-3 text-center text-gray-600">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {expenses.length === 0 ? (
-                  <tr><td colSpan={7} className="text-center text-gray-400 py-8">No expenses yet.</td></tr>
+                  <tr><td colSpan={colVisible.length} className="text-center text-gray-400 py-8">No expenses yet.</td></tr>
                 ) : expenses.map((e) => {
                   const paid = Number(e.paid_amount ?? (e.entry_mode === 'BILL' ? 0 : e.amount));
                   const canPay = e.entry_mode === 'BILL' && e.status !== 'Paid';
                   return (
                     <tr key={e.id} className="border-t hover:bg-yellow-50 cursor-pointer" onClick={() => setDrawerExpense(e)}>
-                      <td className="px-4 py-3">{e.expense_date}</td>
-                      <td className="px-4 py-3">
-                        <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-full">{e.category}</span>
-                        {e.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[12rem]">{e.description}</p>}
-                      </td>
-                      <td className="px-4 py-3 text-xs font-medium">
-                        {e.entry_mode === 'BILL' ? 'Bill' : 'Direct'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[e.status] || 'bg-gray-100 text-gray-700'}`}>
-                          {e.status || 'Paid'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-medium text-red-600">{Number(e.amount).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right font-mono text-gray-600">{paid.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-center" onClick={(ev) => ev.stopPropagation()}>
-                        <div className="flex justify-center gap-1 flex-wrap">
-                          {canPay && (
-                            <button onClick={() => openPay(e)} className="text-green-700 hover:text-green-900 text-xs font-medium px-2 py-1 rounded hover:bg-green-50">Pay</button>
-                          )}
-                          <button onClick={() => openEdit(e)} className="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">Edit</button>
-                          <button onClick={() => handleDelete(e.id)} className="text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">Delete</button>
-                        </div>
-                      </td>
+                      {isVisible('date') && <td className="px-4 py-3">{e.expense_date}</td>}
+                      {isVisible('category') && (
+                        <td className="px-4 py-3">
+                          <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-full">{e.category}</span>
+                          {e.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[12rem]">{e.description}</p>}
+                        </td>
+                      )}
+                      {isVisible('mode') && (
+                        <td className="px-4 py-3 text-xs font-medium">
+                          {e.entry_mode === 'BILL' ? 'Bill' : 'Direct'}
+                        </td>
+                      )}
+                      {isVisible('status') && (
+                        <td className="px-4 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[e.status] || 'bg-gray-100 text-gray-700'}`}>
+                            {e.status || 'Paid'}
+                          </span>
+                        </td>
+                      )}
+                      {isVisible('amount') && <td className="px-4 py-3 text-right font-mono font-medium text-red-600">{Number(e.amount).toLocaleString()}</td>}
+                      {isVisible('paid') && <td className="px-4 py-3 text-right font-mono text-gray-600">{paid.toLocaleString()}</td>}
+                      {isVisible('actions') && (
+                        <td className="px-4 py-3 text-center" onClick={(ev) => ev.stopPropagation()}>
+                          <div className="flex justify-center gap-1 flex-wrap">
+                            {canPay && (
+                              <button onClick={() => openPay(e)} className="text-green-700 hover:text-green-900 text-xs font-medium px-2 py-1 rounded hover:bg-green-50">Pay</button>
+                            )}
+                            <button onClick={() => openEdit(e)} className="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                            <button onClick={() => handleDelete(e.id)} className="text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">Delete</button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -315,9 +431,10 @@ export default function ExpensesPage() {
               {expenses.length > 0 && (
                 <tfoot className="bg-gray-50 border-t">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 font-semibold">Total</td>
-                    <td className="px-4 py-3 text-right font-mono font-bold text-red-700">{totalExpenses.toLocaleString()}</td>
-                    <td colSpan={2} />
+                    <td colSpan={Math.max(1, colVisible.filter((id) => !['amount', 'paid', 'actions'].includes(id)).length)} className="px-4 py-3 font-semibold">Total</td>
+                    {isVisible('amount') && <td className="px-4 py-3 text-right font-mono font-bold text-red-700">{totalExpenses.toLocaleString()}</td>}
+                    {isVisible('paid') && <td className="px-4 py-3" />}
+                    {isVisible('actions') && <td />}
                   </tr>
                 </tfoot>
               )}
@@ -327,9 +444,34 @@ export default function ExpensesPage() {
       )}
 
       {showModal && (
-        <Modal title={editing ? 'Edit Expense' : 'Add Expense'} onClose={() => setShowModal(false)}>
+        <Modal
+          title={editing ? 'Edit Expense' : 'Add Expense'}
+          mode="form"
+          isDirty={expenseDirty}
+          onClose={() => {
+            if (!editing) clearDraft();
+            setShowModal(false);
+          }}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handleSave()}
+              saveLabel={editing ? 'Update Expense' : form.entry_mode === 'BILL' ? 'Record Bill' : 'Add Expense'}
+              saveDisabled={!!editing && expenseEditConflict}
+              error={error ? <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p>}
+            {editing && expenseEditConflict && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                This record is being edited elsewhere. Saving is disabled to prevent overwrites.
+              </p>
+            )}
+            {!editing && draftSaved && (
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded px-2 py-1">
+                Draft saved locally
+              </p>
+            )}
             {!editing && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Entry type *</label>
@@ -468,17 +610,25 @@ export default function ExpensesPage() {
               <textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} rows={2}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
             </div>
-            <button onClick={handleSave} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">
-              {editing ? 'Update Expense' : form.entry_mode === 'BILL' ? 'Record Bill' : 'Add Expense'}
-            </button>
           </div>
         </Modal>
       )}
 
       {showPayModal && paying && (
-        <Modal title={`Pay bill — ${paying.category}`} onClose={() => setShowPayModal(false)}>
+        <Modal
+          title={`Pay bill — ${paying.category}`}
+          mode="form"
+          isDirty={payDirty}
+          onClose={() => setShowPayModal(false)}
+          footer={
+            <ModalFormFooter
+              onSave={() => void handlePay()}
+              saveLabel="Record Payment"
+              error={error ? <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p> : null}
+            />
+          }
+        >
           <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p>}
             <p className="text-sm text-gray-600">
               Bill PKR {Number(paying.amount).toLocaleString()} · Paid PKR {Number(paying.paid_amount || 0).toLocaleString()} ·
               Balance <span className="font-semibold text-amber-700">PKR {(Number(paying.amount) - Number(paying.paid_amount || 0)).toLocaleString()}</span>
@@ -527,9 +677,6 @@ export default function ExpensesPage() {
               <input value={payForm.notes} onChange={(e) => setPayForm((f) => ({ ...f, notes: e.target.value }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Optional" />
             </div>
-            <button onClick={handlePay} className="w-full bg-green-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-green-700">
-              Record Payment
-            </button>
           </div>
         </Modal>
       )}
@@ -539,6 +686,28 @@ export default function ExpensesPage() {
         title={`Expense — ${drawerExpense?.category ?? ''}`}
         subtitle={drawerExpense ? `${drawerExpense.expense_date} · PKR ${Number(drawerExpense.amount).toLocaleString()}` : ''}
         onClose={() => setDrawerExpense(null)}
+        footer={
+          drawerExpense ? (
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                onClick={() => setDrawerExpense(null)}
+              >
+                Close
+              </button>
+              {drawerExpense.entry_mode === 'BILL' && drawerExpense.status !== 'Paid' && (
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+                  onClick={() => { setDrawerExpense(null); openPay(drawerExpense); }}
+                >
+                  Pay bill
+                </button>
+              )}
+            </div>
+          ) : null
+        }
       >
         {drawerExpense && (
           <>
@@ -555,14 +724,11 @@ export default function ExpensesPage() {
             <DrawerSection title="Project Allocation" />
             <DrawerField label="Project ID" value={drawerExpense.project_id} />
             <DrawerField label="Stage ID" value={drawerExpense.project_stage_id} />
-            {drawerExpense.entry_mode === 'BILL' && drawerExpense.status !== 'Paid' && (
-              <button
-                type="button"
-                className="mt-4 w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium"
-                onClick={() => { setDrawerExpense(null); openPay(drawerExpense); }}
-              >
-                Pay bill
-              </button>
+            {(drawerExpense as Expense & { created_by?: string }).created_by && (
+              <DrawerField label="Created By" value={(drawerExpense as Expense & { created_by?: string }).created_by} />
+            )}
+            {drawerExpense.created_at && (
+              <DrawerField label="Created At" value={String(drawerExpense.created_at).slice(0, 19)} />
             )}
           </>
         )}

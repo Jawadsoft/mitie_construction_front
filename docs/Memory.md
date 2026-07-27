@@ -4,6 +4,10 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## Completed
 
+- UX 14–25: breadcrumbs; shortcuts (N/Ctrl+S//?); card View/Expense/Payment/Collection/Stage Update; notification bell (`GET /api/notifications/summary`); skeletons + optimistic expense create; Activity/Documents workspace tabs; project soft-delete + restore; `created_by`/`updated_by`/`posted_by`; BroadcastChannel edit locks
+- Drawer / prefs / drafts / session / search: view = `DetailDrawer` (+ footer, ESC vs Modal); `useListFilters` URL+`erp.filters.*`; `ColumnPicker` + `erp.columns.*` (Projects Cards|Table); `useFormDraft` for Project/Expense create; `erp.lastRoute` recovery; Nest `GET /api/search` + Ctrl+K `GlobalSearch`
+- Modal + nav UX: sticky Modal `footer` / `ModalFormFooter`; Discard/Save/Cancel unsaved leave guard; smart Back via `navHistory`; Inventory/Procurement/Settings overlays → Modal (ESC+X)
+- ERP UX polish: HashRouter (`#/projects/:id?tab=&stage=`); list filters in URL + `erp.filters.*` localStorage; Modal `view`/`form` + dirty discard confirm; wired Projects/Funds/Expenses/Sales/QuickEntry/Detail sell & default stages
 - Payment reflection: project/stage `total_spent` = expenses + labour_payments + material_issues; labour payments accept `project_stage_id` + `bank_account_id` (JE credits chosen bank); `GET /api/funds/investor-ledger` + Funds Investor Ledger UI; unit sale sets project `Sold` when no Available units remain
 - Project Details workspace: Overview + Financial Summary always visible; tabs for Construction / Funding / Inventory / Procurement / Labour / Expenses / Sales / Profitability; `owner_name` / `manager_name` on projects; Fuel + Finance expense categories
 - Project cards redesign: Completion / Budget / Actual / Profit (Pending until sold_value); strategy quick actions (DEVELOPMENT: Update Stage, Issue/Purchase Material, Add Labour, Sell Project; DIRECT_SALE: Record Sale, View Profit); Upload Document toast (P5); App `navIntent` deep-opens Inventory/Labour/Sales/Reports/Detail
@@ -36,7 +40,7 @@ Diary for agents and developers. Update this file at the end of every developmen
 
 ## In Progress
 
-- None (Project Details workspace shipped)
+- None (Modal + nav UX shipped)
 
 **Current focus:** P2 deepen next (multi-level MR approvals) per [Tasks.md](Tasks.md).
 
@@ -56,7 +60,7 @@ Parallel (do not block P3+):
 
 ## Last update
 
-27 July 2026 — Project Details workspace (10-section tabs) + owner/manager fields
+27 July 2026 — Modal sticky footers, unsaved leave (Discard/Save/Cancel), smart Back
 
 ## Session ritual
 

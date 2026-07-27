@@ -17,4 +17,6 @@ export declare class Expense {
     cash_transaction_id: string | null;
     created_at: Date;
     updated_at: Date;
+    created_by: string | null;
+    updated_by: string | null;
 }

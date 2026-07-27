@@ -6,9 +6,11 @@ import { StageBudget } from './entities/stage-budget.entity';
 import { StageProgress } from './entities/stage-progress.entity';
 import { ProjectsService } from './projects.service';
 import { ProjectsController } from './projects.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     TypeOrmModule.forFeature([Project, ProjectStage, StageBudget, StageProgress]),
   ],
   controllers: [ProjectsController],

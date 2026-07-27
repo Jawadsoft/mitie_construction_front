@@ -24,6 +24,23 @@ import { getExpenses } from '../../api/expenses';
 import type { Expense } from '../../api/expenses';
 import { getSales, getSale } from '../../api/sales';
 import type { Sale } from '../../api/sales';
+import { getProjectActivity } from '../../api/projects';
+import type { ProjectActivityItem } from '../../api/projects';
+import { formatDate } from '../../utils/date';
+
+const ACTIVITY_COLORS: Record<string, string> = {
+  Expense: 'bg-red-100 text-red-700',
+  Cash: 'bg-slate-100 text-slate-700',
+  Accounting: 'bg-violet-100 text-violet-700',
+  Sale: 'bg-green-100 text-green-700',
+  Collection: 'bg-emerald-100 text-emerald-700',
+  Labour: 'bg-amber-100 text-amber-800',
+  Stage: 'bg-blue-100 text-blue-700',
+  Inventory: 'bg-cyan-100 text-cyan-800',
+  Procurement: 'bg-orange-100 text-orange-800',
+  Project: 'bg-indigo-100 text-indigo-800',
+  Fund: 'bg-teal-100 text-teal-800',
+};
 
 export type WorkspaceTab =
   | 'construction'
@@ -33,7 +50,9 @@ export type WorkspaceTab =
   | 'labour'
   | 'expenses'
   | 'sales'
-  | 'profitability';
+  | 'profitability'
+  | 'activity'
+  | 'documents';
 
 function fmt(n: number) {
   return `PKR ${n.toLocaleString()}`;
@@ -41,8 +60,10 @@ function fmt(n: number) {
 
 function PanelLoading() {
   return (
-    <div className="flex justify-center py-10">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    <div className="space-y-3 py-2" aria-busy="true">
+      <div className="animate-pulse h-4 w-1/3 rounded bg-slate-200" />
+      <div className="animate-pulse h-24 w-full rounded bg-slate-200" />
+      <div className="animate-pulse h-24 w-full rounded bg-slate-200" />
     </div>
   );
 }
@@ -101,6 +122,8 @@ export function ProjectWorkspacePanels({
   if (tab === 'expenses') return <ExpensesPanel projectId={projectId} />;
   if (tab === 'sales') return <SalesPanel projectId={projectId} project={project} />;
   if (tab === 'profitability') return <ProfitabilityPanel projectId={projectId} project={project} />;
+  if (tab === 'activity') return <ActivityPanel projectId={projectId} />;
+  if (tab === 'documents') return <DocumentsPanel />;
   return null;
 }
 
@@ -618,6 +641,93 @@ function SalesPanel({ projectId, project }: { projectId: string; project: Projec
         )}
       </SectionCard>
     </div>
+  );
+}
+
+function DocumentsPanel() {
+  return (
+    <SectionCard title="Documents">
+      <div className="text-center py-10 space-y-2">
+        <p className="text-sm font-medium text-slate-700">Document management coming in P5</p>
+        <p className="text-xs text-slate-500 max-w-md mx-auto">
+          Drawings, contracts, NOCs, and site photos will attach here and link to this project.
+        </p>
+      </div>
+    </SectionCard>
+  );
+}
+
+function ActivityPanel({ projectId }: { projectId: string }) {
+  const [rows, setRows] = useState<ProjectActivityItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [category, setCategory] = useState('All');
+
+  useEffect(() => {
+    setLoading(true);
+    getProjectActivity(projectId)
+      .then((res) => setRows(res.activities ?? []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  const categories = useMemo(() => {
+    const set = new Set(rows.map((a) => a.category));
+    return ['All', ...Array.from(set).sort()];
+  }, [rows]);
+
+  const filtered = category === 'All' ? rows : rows.filter((a) => a.category === category);
+
+  if (loading) return <PanelLoading />;
+
+  return (
+    <SectionCard
+      title="Activity timeline"
+      actions={
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="border rounded-lg px-2 py-1 text-xs"
+        >
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c === 'All' ? 'All categories' : c}
+            </option>
+          ))}
+        </select>
+      }
+    >
+      {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
+      {filtered.length === 0 ? (
+        <Empty>No activity recorded for this project yet.</Empty>
+      ) : (
+        <ol className="relative border-l border-slate-200 ml-3 space-y-4">
+          {filtered.map((a, i) => (
+            <li key={`${a.entity_type}-${a.entity_id}-${i}`} className="ml-4 pl-1">
+              <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-white bg-slate-400" />
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span>{formatDate(a.occurred_at)}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded font-semibold ${
+                    ACTIVITY_COLORS[a.category] || 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {a.category}
+                </span>
+                <span className="font-medium text-slate-700">{a.action}</span>
+              </div>
+              <p className="text-sm text-slate-700 mt-0.5">{a.description}</p>
+              <div className="flex gap-3 text-xs text-slate-400 mt-0.5">
+                {a.reference && <span className="font-mono">{a.reference}</span>}
+                {a.amount != null && Number.isFinite(a.amount) && (
+                  <span className="font-mono">PKR {Number(a.amount).toLocaleString()}</span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </SectionCard>
   );
 }
 

@@ -132,11 +132,22 @@ export class ProjectsService {
     }));
   }
 
-  async findAll() {
-    const projects = await this.projectsRepo.find({
-      relations: ['stages', 'stages.budget'],
-      order: { created_at: 'DESC' },
-    });
+  async findAll(lifecycle: 'active' | 'archived' | 'deleted' = 'active') {
+    const qb = this.projectsRepo
+      .createQueryBuilder('p')
+      .leftJoinAndSelect('p.stages', 'stages')
+      .leftJoinAndSelect('stages.budget', 'budget')
+      .orderBy('p.created_at', 'DESC');
+
+    if (lifecycle === 'deleted') {
+      qb.where('p.deleted_at IS NOT NULL');
+    } else if (lifecycle === 'archived') {
+      qb.where('p.deleted_at IS NULL').andWhere('p.status = :st', { st: 'Cancelled' });
+    } else {
+      qb.where('p.deleted_at IS NULL');
+    }
+
+    const projects = await qb.getMany();
     const financials = await this.loadProjectFinancials();
     const enriched: ReturnType<ProjectsService['enrichProject']>[] = [];
     for (const p of projects) {
@@ -454,7 +465,7 @@ export class ProjectsService {
     return String(n);
   }
 
-  async create(dto: CreateProjectDto) {
+  async create(dto: CreateProjectDto, userId?: string) {
     if (!dto.name?.trim()) throw new BadRequestException('name is required');
     this.assertValidStatus(dto.status);
     const tax = this.validateTaxonomy(dto, true)!;
@@ -485,6 +496,8 @@ export class ProjectsService {
           : undefined,
       status: dto.status || 'Planning',
       sold_as_is: false,
+      created_by: userId ?? null,
+      updated_by: userId ?? null,
     });
     const saved = await this.projectsRepo.save(project);
     if (tax.strategy === 'DEVELOPMENT') {
@@ -493,7 +506,7 @@ export class ProjectsService {
     return this.findOne(String(saved.id));
   }
 
-  async update(id: string, dto: Partial<CreateProjectDto>) {
+  async update(id: string, dto: Partial<CreateProjectDto>, userId?: string) {
     const existing = await this.findOne(id);
     this.assertValidStatus(dto.status);
     const normalizedExisting = normalizeTaxonomyInput({
@@ -549,12 +562,27 @@ export class ProjectsService {
       updateData.project_category = null;
       updateData.project_purpose = null;
     }
+    if (userId) updateData.updated_by = userId;
 
     await this.projectsRepo.update(id, updateData);
     return this.findOne(id);
   }
 
   async remove(id: string) {
+    const project = await this.projectsRepo.findOne({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+    await this.projectsRepo.update(id, { deleted_at: new Date() });
+    return { success: true, id, soft_deleted: true };
+  }
+
+  async restore(id: string) {
+    const project = await this.projectsRepo.findOne({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+    await this.projectsRepo.update(id, { deleted_at: null });
+    return this.findOne(id);
+  }
+
+  async hardRemove(id: string) {
     await this.findOne(id); // throws 404 if not found
 
     // 0. Remove voucher journals by reference before deleting source rows

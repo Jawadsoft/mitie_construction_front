@@ -17,6 +17,8 @@ export interface Expense {
   status: string;
   description: string | null;
   created_at: string;
+  created_by?: string | null;
+  updated_by?: string | null;
 }
 
 export interface ExpensePayment {

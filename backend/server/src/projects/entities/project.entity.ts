@@ -90,6 +90,15 @@ export class Project {
   })
   updated_at: Date;
 
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  created_by: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  updated_by: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  deleted_at: Date | null;
+
   @OneToMany(() => ProjectStage, (stage) => stage.project)
   stages: ProjectStage[];
 }

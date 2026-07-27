@@ -27,6 +27,8 @@ const reports_module_1 = require("./reports/reports.module");
 const inventory_module_1 = require("./inventory/inventory.module");
 const settings_module_1 = require("./settings/settings.module");
 const land_module_1 = require("./land/land.module");
+const search_module_1 = require("./search/search.module");
+const notifications_module_1 = require("./notifications/notifications.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -68,6 +70,8 @@ exports.AppModule = AppModule = __decorate([
             inventory_module_1.InventoryModule,
             settings_module_1.SettingsModule,
             land_module_1.LandModule,
+            search_module_1.SearchModule,
+            notifications_module_1.NotificationsModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [app_service_1.AppService],

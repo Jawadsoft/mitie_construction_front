@@ -18,7 +18,7 @@ export declare class ProjectsService {
     private seedDevelopmentStages;
     private loadStageActualCosts;
     private attachActualCosts;
-    findAll(): Promise<{
+    findAll(lifecycle?: 'active' | 'archived' | 'deleted'): Promise<{
         computed: {
             total_stage_budget: number;
             avg_completion_percent: number;
@@ -57,6 +57,9 @@ export declare class ProjectsService {
         sold_notes: string | null;
         created_at: Date;
         updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
         stages: ProjectStage[];
     }[]>;
     findOne(id: string): Promise<{
@@ -98,6 +101,9 @@ export declare class ProjectsService {
         sold_notes: string | null;
         created_at: Date;
         updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
         stages: ProjectStage[];
     }>;
     getActivityLog(projectId: string): Promise<{
@@ -116,7 +122,7 @@ export declare class ProjectsService {
         }[];
     }>;
     private normalizePlotSizeSqft;
-    create(dto: CreateProjectDto): Promise<{
+    create(dto: CreateProjectDto, userId?: string): Promise<{
         computed: {
             total_stage_budget: number;
             avg_completion_percent: number;
@@ -155,9 +161,12 @@ export declare class ProjectsService {
         sold_notes: string | null;
         created_at: Date;
         updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
         stages: ProjectStage[];
     }>;
-    update(id: string, dto: Partial<CreateProjectDto>): Promise<{
+    update(id: string, dto: Partial<CreateProjectDto>, userId?: string): Promise<{
         computed: {
             total_stage_budget: number;
             avg_completion_percent: number;
@@ -196,9 +205,61 @@ export declare class ProjectsService {
         sold_notes: string | null;
         created_at: Date;
         updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
         stages: ProjectStage[];
     }>;
     remove(id: string): Promise<{
+        success: boolean;
+        id: string;
+        soft_deleted: boolean;
+    }>;
+    restore(id: string): Promise<{
+        computed: {
+            total_stage_budget: number;
+            avg_completion_percent: number;
+            stage_count: number;
+            total_spent: number;
+            total_collected: number;
+            sold_value: number;
+            profit: number;
+            profit_margin_pct: number;
+            fund_receipts: number;
+            budget_used_pct: number;
+            collection_pct: number;
+        };
+        id: string;
+        name: string;
+        location: string | null;
+        owner_name: string | null;
+        manager_name: string | null;
+        plot_size: string | null;
+        plot_size_sqft: string | null;
+        start_date: string | null;
+        expected_completion_date: string | null;
+        project_type: string | null;
+        project_subtype: string | null;
+        project_strategy: string | null;
+        asset_class: string | null;
+        project_category: string | null;
+        project_purpose: string | null;
+        total_estimated_budget: string | null;
+        target_sale_price: string | null;
+        status: string;
+        sold_as_is: boolean;
+        sold_at: string | null;
+        sold_price: string | null;
+        sold_buyer_name: string | null;
+        sold_notes: string | null;
+        created_at: Date;
+        updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
+        stages: ProjectStage[];
+    }>;
+    hardRemove(id: string): Promise<{
         message: string;
     }>;
     findStages(projectId: string): Promise<{
@@ -257,6 +318,9 @@ export declare class ProjectsService {
         sold_notes: string | null;
         created_at: Date;
         updated_at: Date;
+        created_by: string | null;
+        updated_by: string | null;
+        deleted_at: Date | null;
         stages: ProjectStage[];
     }>;
     createStage(projectId: string, dto: CreateStageDto): Promise<ProjectStage | null>;

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   getProject,
   createStage,
@@ -12,15 +13,20 @@ import {
 import type { Project, Stage, ProjectSubtype } from '../api/projects';
 import FieldLabel from '../components/FieldLabel';
 import MoneyInput from '../components/MoneyInput';
+import Modal, { useModalRequestClose } from '../components/Modal';
 import ProjectActivityLog from '../components/ProjectActivityLog';
 import {
   ProjectWorkspacePanels,
   type WorkspaceTab,
 } from '../components/project-detail/ProjectWorkspacePanels';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { notify, notifyError } from '../utils/toast';
 import { parseMoneyInput } from '../utils/money';
 import type { NavIntent } from '../types/navIntent';
+import { parseWorkspaceTab, WORKSPACE_TAB_LABELS } from '../utils/navState';
+import { isFormDirty } from '../hooks/useDirtyForm';
+import { useRegisterUnsaved } from '../components/ConfirmDialog';
+import Breadcrumbs from '../components/Breadcrumbs';
+import { DetailSkeleton } from '../components/Skeleton';
 
 function moneyDigits(raw: string | number | null | undefined): string {
   if (raw == null || raw === '') return '';
@@ -65,7 +71,8 @@ const DEFAULT_STAGES = [
 
 interface Props {
   projectId: string;
-  onBack: () => void;
+  onBack: () => void | Promise<void>;
+  backLabel?: string;
   initialIntent?: NavIntent;
   onIntentConsumed?: () => void;
 }
@@ -80,12 +87,216 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function DefaultStagesModalBody({
+  project,
+  selectedDefaults,
+  setSelectedDefaults,
+  defaultSuccess,
+  addingDefaults,
+  onAdd,
+}: {
+  project: Project | null;
+  selectedDefaults: Set<number>;
+  setSelectedDefaults: Dispatch<SetStateAction<Set<number>>>;
+  defaultSuccess: string;
+  addingDefaults: boolean;
+  onAdd: () => void;
+}) {
+  const requestClose = useModalRequestClose();
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">Select stages to add — existing stages will be skipped</p>
+      <div className="flex gap-3 pb-2 border-b">
+        <button
+          type="button"
+          onClick={() => setSelectedDefaults(new Set(DEFAULT_STAGES.map((_, i) => i)))}
+          className="text-xs text-blue-600 hover:underline font-medium"
+        >
+          Select All
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedDefaults(new Set())}
+          className="text-xs text-gray-500 hover:underline"
+        >
+          Clear All
+        </button>
+        <span className="ml-auto text-xs text-gray-400">{selectedDefaults.size} selected</span>
+      </div>
+
+      <div className="max-h-[50vh] overflow-y-auto space-y-1.5">
+        {DEFAULT_STAGES.map((stage, idx) => {
+          const alreadyExists = (project?.stages || []).some(
+            (s) => s.name.toLowerCase() === stage.name.toLowerCase(),
+          );
+          const checked = selectedDefaults.has(idx);
+          return (
+            <label
+              key={idx}
+              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                alreadyExists
+                  ? 'bg-gray-50 border-gray-200 opacity-60 cursor-not-allowed'
+                  : checked
+                    ? 'bg-blue-50 border-blue-200'
+                    : 'bg-white border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                disabled={alreadyExists}
+                checked={alreadyExists ? false : checked}
+                onChange={() => {
+                  if (alreadyExists) return;
+                  setSelectedDefaults((prev) => {
+                    const next = new Set(prev);
+                    next.has(idx) ? next.delete(idx) : next.add(idx);
+                    return next;
+                  });
+                }}
+                className="mt-0.5 accent-blue-600 shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{stage.icon}</span>
+                  <span className="text-sm font-medium text-gray-800">{stage.name}</span>
+                  {alreadyExists && (
+                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">
+                      Already added
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">{stage.description}</p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      {defaultSuccess && (
+        <p className="text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg text-center font-medium">
+          {defaultSuccess}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={addingDefaults || selectedDefaults.size === 0}
+          className="flex-1 bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+        >
+          {addingDefaults
+            ? 'Adding…'
+            : `Add ${selectedDefaults.size} Stage${selectedDefaults.size !== 1 ? 's' : ''}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SellProjectModalBody({
+  sellForm,
+  setSellForm,
+  selling,
+  onSubmit,
+}: {
+  sellForm: { buyer_name: string; sale_price: string; sale_date: string; notes: string };
+  setSellForm: Dispatch<
+    SetStateAction<{ buyer_name: string; sale_price: string; sale_date: string; notes: string }>
+  >;
+  selling: boolean;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const requestClose = useModalRequestClose();
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <p className="text-xs text-slate-500">
+        Records Sold During Construction and locks further stage edits.
+      </p>
+      <div>
+        <FieldLabel info="Name of the buyer for this as-is mid-construction sale." required>
+          Buyer Name
+        </FieldLabel>
+        <input
+          required
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          value={sellForm.buyer_name}
+          onChange={(e) => setSellForm((f) => ({ ...f, buyer_name: e.target.value }))}
+          disabled={selling}
+        />
+      </div>
+      <div>
+        <FieldLabel info="Agreed sale price in PKR for selling the project as-is.">
+          Sale Price (PKR)
+        </FieldLabel>
+        <MoneyInput
+          value={sellForm.sale_price}
+          onChange={(digits) => setSellForm((f) => ({ ...f, sale_price: digits }))}
+          disabled={selling}
+        />
+      </div>
+      <div>
+        <FieldLabel info="Date the mid-construction sale is recorded.">
+          Sale Date
+        </FieldLabel>
+        <input
+          type="date"
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          value={sellForm.sale_date}
+          onChange={(e) => setSellForm((f) => ({ ...f, sale_date: e.target.value }))}
+          disabled={selling}
+        />
+      </div>
+      <div>
+        <FieldLabel info="Optional remarks about the as-is sale.">
+          Notes
+        </FieldLabel>
+        <textarea
+          rows={2}
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          value={sellForm.notes}
+          onChange={(e) => setSellForm((f) => ({ ...f, notes: e.target.value }))}
+          disabled={selling}
+        />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button
+          type="button"
+          onClick={requestClose}
+          disabled={selling}
+          className="flex-1 border border-slate-300 rounded-lg py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={selling}
+          className="flex-1 bg-indigo-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center justify-center gap-2"
+        >
+          {selling && (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+          )}
+          {selling ? 'Saving…' : 'Confirm Sale'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function ProjectDetailPage({
   projectId,
   onBack,
+  backLabel = 'Back to Projects',
   initialIntent,
   onIntentConsumed,
 }: Props) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -96,18 +307,45 @@ export default function ProjectDetailPage({
   const [showDefaultModal, setShowDefaultModal] = useState(false);
   const [showSellModal, setShowSellModal] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
-  useBodyScrollLock(showDefaultModal || showSellModal);
-  const [selectedDefaults, setSelectedDefaults] = useState<Set<number>>(new Set(DEFAULT_STAGES.map((_, i) => i)));
+  const defaultAllSelected = () => new Set(DEFAULT_STAGES.map((_, i) => i));
+  const [selectedDefaults, setSelectedDefaults] = useState<Set<number>>(defaultAllSelected);
+  const [defaultsBaseline, setDefaultsBaseline] = useState<number[]>([...defaultAllSelected()]);
   const [addingDefaults, setAddingDefaults] = useState(false);
   const [defaultSuccess, setDefaultSuccess] = useState('');
   const [selling, setSelling] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('construction');
-  const [sellForm, setSellForm] = useState({
+  const tabFromUrl = parseWorkspaceTab(searchParams.get('tab'));
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(tabFromUrl || 'construction');
+  const [highlightStageId, setHighlightStageId] = useState<string | null>(searchParams.get('stage'));
+  const emptySellForm = () => ({
     buyer_name: '',
     sale_price: '',
     sale_date: todayIso(),
     notes: '',
   });
+  const [sellForm, setSellForm] = useState(emptySellForm);
+  const [sellBaseline, setSellBaseline] = useState(emptySellForm());
+
+  const syncTabToUrl = useCallback(
+    (tab: WorkspaceTab, stageId?: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('tab', tab);
+          if (tab === 'construction' && stageId) next.set('stage', stageId);
+          else if (tab !== 'construction') next.delete('stage');
+          else if (stageId === null) next.delete('stage');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const selectWorkspaceTab = (tab: WorkspaceTab) => {
+    setWorkspaceTab(tab);
+    syncTabToUrl(tab, tab === 'construction' ? highlightStageId : null);
+  };
 
   const load = async () => {
     try {
@@ -120,10 +358,18 @@ export default function ProjectDetailPage({
   useEffect(() => { load(); }, [projectId]);
 
   useEffect(() => {
+    const tab = parseWorkspaceTab(searchParams.get('tab'));
+    if (tab) setWorkspaceTab(tab);
+    const stage = searchParams.get('stage');
+    setHighlightStageId(stage);
+  }, [searchParams]);
+
+  useEffect(() => {
     if (!project) return;
     const strategy = normalizeProjectFields(project).project_strategy;
-    if (strategy === 'DIRECT_SALE') {
-      setWorkspaceTab((t) => (t === 'construction' ? 'sales' : t));
+    if (strategy === 'DIRECT_SALE' && workspaceTab === 'construction') {
+      setWorkspaceTab('sales');
+      syncTabToUrl('sales');
     }
   }, [project?.id, project?.project_strategy]);
 
@@ -131,6 +377,14 @@ export default function ProjectDetailPage({
     () => [...(project?.stages || [])].sort((a, b) => a.sequence_order - b.sequence_order),
     [project?.stages],
   );
+
+  useEffect(() => {
+    if (!highlightStageId || loading) return;
+    const el = document.getElementById(`stage-${highlightStageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightStageId, loading, stages.length]);
 
   const currentStage = useMemo(() => {
     return (
@@ -156,6 +410,8 @@ export default function ProjectDetailPage({
       other_budget: moneyDigits(stage.budget?.other_budget),
     });
     setShowStageForm(true);
+    setHighlightStageId(stage.id);
+    syncTabToUrl('construction', stage.id);
   };
 
   useEffect(() => {
@@ -165,18 +421,26 @@ export default function ProjectDetailPage({
       return;
     }
     if (initialIntent.action === 'update-stage') {
-      setWorkspaceTab('construction');
+      selectWorkspaceTab('construction');
       if (currentStage) openEditStage(currentStage);
       else setShowStageForm(true);
       onIntentConsumed?.();
       return;
     }
     if (initialIntent.action === 'sell-project') {
-      setWorkspaceTab('construction');
+      selectWorkspaceTab('construction');
+      const baseline = emptySellForm();
+      setSellForm(baseline);
+      setSellBaseline(baseline);
       setShowSellModal(true);
       onIntentConsumed?.();
     }
   }, [initialIntent, project, loading, projectId, currentStage]);
+
+  const defaultsDirty =
+    [...selectedDefaults].sort().join(',') !== [...defaultsBaseline].sort().join(',');
+
+  const sellDirty = isFormDirty(sellForm, sellBaseline);
 
   const handleStageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,12 +522,28 @@ export default function ProjectDetailPage({
       notify.success('Project sold as-is during construction');
     } catch (err: unknown) {
       setError(notifyError(err, 'Failed to sell project'));
+      throw err;
     } finally {
       setSelling(false);
     }
   };
 
-  if (loading) return <p className="text-sm text-slate-500">Loading…</p>;
+  useRegisterUnsaved({
+    active: showDefaultModal,
+    isDirty: defaultsDirty,
+    onSave: handleAddDefaultStages,
+    onDiscard: () => setShowDefaultModal(false),
+  });
+  useRegisterUnsaved({
+    active: showSellModal,
+    isDirty: sellDirty,
+    onSave: async () => {
+      await handleSell({ preventDefault() {} } as React.FormEvent);
+    },
+    onDiscard: () => setShowSellModal(false),
+  });
+
+  if (loading) return <DetailSkeleton />;
   if (!project) return <p className="text-sm text-red-500">{error}</p>;
 
   const tax = normalizeProjectFields(project);
@@ -276,10 +556,21 @@ export default function ProjectDetailPage({
     project.status !== 'Sold' &&
     project.status !== 'Sold During Construction';
 
+  const stageCrumb = highlightStageId
+    ? stages.find((s) => s.id === highlightStageId)?.name
+    : null;
+  const crumbItems = [
+    { label: 'Projects', to: '/projects' },
+    { label: project.name },
+    { label: WORKSPACE_TAB_LABELS[workspaceTab] || workspaceTab },
+    ...(stageCrumb && workspaceTab === 'construction' ? [{ label: stageCrumb }] : []),
+  ];
+
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1">
-        ← Back to Projects
+      <Breadcrumbs items={crumbItems} />
+      <button onClick={() => void onBack()} className="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1">
+        ← {backLabel}
       </button>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -320,10 +611,25 @@ export default function ProjectDetailPage({
               </span>
               <button
                 type="button"
-                onClick={() => setShowActivityLog(true)}
+                onClick={() => selectWorkspaceTab('activity')}
                 className="text-xs rounded-lg border border-white/25 bg-white/10 text-white px-3 py-1.5 hover:bg-white/20"
               >
                 Activity Log
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/projects/${projectId}?tab=${workspaceTab}${
+                    highlightStageId ? `&stage=${highlightStageId}` : ''
+                  }`;
+                  void navigator.clipboard?.writeText(url).then(
+                    () => notify.success('Link copied'),
+                    () => notify.info(url),
+                  );
+                }}
+                className="text-xs rounded-lg border border-white/25 bg-white/10 text-white px-3 py-1.5 hover:bg-white/20"
+              >
+                Copy link
               </button>
             </div>
           </div>
@@ -455,6 +761,8 @@ export default function ProjectDetailPage({
           { id: 'expenses', label: 'Expenses' },
           { id: 'sales', label: 'Sales' },
           { id: 'profitability', label: 'Profitability' },
+          { id: 'activity', label: 'Activity' },
+          { id: 'documents', label: 'Documents' },
         ];
         return (
           <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
@@ -462,7 +770,7 @@ export default function ProjectDetailPage({
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setWorkspaceTab(t.id)}
+                onClick={() => selectWorkspaceTab(t.id)}
                 className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                   workspaceTab === t.id
                     ? 'border-blue-600 text-blue-600'
@@ -497,7 +805,9 @@ export default function ProjectDetailPage({
             <button
               type="button"
               onClick={() => {
-                setSellForm({ buyer_name: '', sale_price: '', sale_date: todayIso(), notes: '' });
+                const baseline = emptySellForm();
+                setSellForm(baseline);
+                setSellBaseline(baseline);
                 setShowSellModal(true);
                 setError('');
               }}
@@ -520,7 +830,14 @@ export default function ProjectDetailPage({
             <div className="flex gap-2">
               <button
                 className="rounded border border-slate-300 bg-white text-slate-700 px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-1"
-                onClick={() => { setShowDefaultModal(true); setDefaultSuccess(''); setError(''); }}
+                onClick={() => {
+                  const all = defaultAllSelected();
+                  setSelectedDefaults(all);
+                  setDefaultsBaseline([...all]);
+                  setShowDefaultModal(true);
+                  setDefaultSuccess('');
+                  setError('');
+                }}
               >
                 ⚡ Default Stages
               </button>
@@ -615,159 +932,39 @@ export default function ProjectDetailPage({
         )}
 
         {canEditStages && showDefaultModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between px-5 py-4 border-b">
-                <div>
-                  <h3 className="font-semibold text-gray-900">Add Default Construction Stages</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Select stages to add — existing stages will be skipped</p>
-                </div>
-                <button onClick={() => setShowDefaultModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
-              </div>
-
-              <div className="overflow-y-auto flex-1 p-4 space-y-1.5">
-                <div className="flex gap-3 pb-2 border-b mb-3">
-                  <button onClick={() => setSelectedDefaults(new Set(DEFAULT_STAGES.map((_, i) => i)))}
-                    className="text-xs text-blue-600 hover:underline font-medium">Select All</button>
-                  <button onClick={() => setSelectedDefaults(new Set())}
-                    className="text-xs text-gray-500 hover:underline">Clear All</button>
-                  <span className="ml-auto text-xs text-gray-400">{selectedDefaults.size} selected</span>
-                </div>
-
-                {DEFAULT_STAGES.map((stage, idx) => {
-                  const alreadyExists = (project?.stages || []).some(s => s.name.toLowerCase() === stage.name.toLowerCase());
-                  const checked = selectedDefaults.has(idx);
-                  return (
-                    <label key={idx} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      alreadyExists ? 'bg-gray-50 border-gray-200 opacity-60 cursor-not-allowed' :
-                      checked ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'
-                    }`}>
-                      <input
-                        type="checkbox"
-                        disabled={alreadyExists}
-                        checked={alreadyExists ? false : checked}
-                        onChange={() => {
-                          if (alreadyExists) return;
-                          setSelectedDefaults(prev => {
-                            const next = new Set(prev);
-                            next.has(idx) ? next.delete(idx) : next.add(idx);
-                            return next;
-                          });
-                        }}
-                        className="mt-0.5 accent-blue-600 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{stage.icon}</span>
-                          <span className="text-sm font-medium text-gray-800">{stage.name}</span>
-                          {alreadyExists && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">Already added</span>}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-0.5">{stage.description}</p>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-
-              <div className="px-5 py-4 border-t space-y-3">
-                {defaultSuccess && (
-                  <p className="text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg text-center font-medium">{defaultSuccess}</p>
-                )}
-                <div className="flex gap-2">
-                  <button onClick={() => setShowDefaultModal(false)}
-                    className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50">
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleAddDefaultStages}
-                    disabled={addingDefaults || selectedDefaults.size === 0}
-                    className="flex-1 bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    {addingDefaults ? 'Adding…' : `Add ${selectedDefaults.size} Stage${selectedDefaults.size !== 1 ? 's' : ''}`}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <Modal
+            title="Add Default Construction Stages"
+            mode="form"
+            isDirty={defaultsDirty}
+            onClose={() => setShowDefaultModal(false)}
+          >
+            <DefaultStagesModalBody
+              project={project}
+              selectedDefaults={selectedDefaults}
+              setSelectedDefaults={setSelectedDefaults}
+              defaultSuccess={defaultSuccess}
+              addingDefaults={addingDefaults}
+              onAdd={handleAddDefaultStages}
+            />
+          </Modal>
         )}
 
         {showSellModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <form onSubmit={handleSell} className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-              <div className="px-5 py-4 border-b bg-indigo-600">
-                <h3 className="font-semibold text-white">Sell Project (As-Is)</h3>
-                <p className="text-xs text-indigo-100 mt-0.5">
-                  Records Sold During Construction and locks further stage edits.
-                </p>
-              </div>
-              <div className="p-5 space-y-3">
-                <div>
-                  <FieldLabel info="Name of the buyer for this as-is mid-construction sale." required>
-                    Buyer Name
-                  </FieldLabel>
-                  <input
-                    required
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={sellForm.buyer_name}
-                    onChange={(e) => setSellForm((f) => ({ ...f, buyer_name: e.target.value }))}
-                    disabled={selling}
-                  />
-                </div>
-                <div>
-                  <FieldLabel info="Agreed sale price in PKR for selling the project as-is.">
-                    Sale Price (PKR)
-                  </FieldLabel>
-                  <MoneyInput
-                    value={sellForm.sale_price}
-                    onChange={(digits) => setSellForm((f) => ({ ...f, sale_price: digits }))}
-                    disabled={selling}
-                  />
-                </div>
-                <div>
-                  <FieldLabel info="Date the mid-construction sale is recorded.">
-                    Sale Date
-                  </FieldLabel>
-                  <input
-                    type="date"
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={sellForm.sale_date}
-                    onChange={(e) => setSellForm((f) => ({ ...f, sale_date: e.target.value }))}
-                    disabled={selling}
-                  />
-                </div>
-                <div>
-                  <FieldLabel info="Optional remarks about the as-is sale.">
-                    Notes
-                  </FieldLabel>
-                  <textarea
-                    rows={2}
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                    value={sellForm.notes}
-                    onChange={(e) => setSellForm((f) => ({ ...f, notes: e.target.value }))}
-                    disabled={selling}
-                  />
-                </div>
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowSellModal(false)}
-                    disabled={selling}
-                    className="flex-1 border border-slate-300 rounded-lg py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={selling}
-                    className="flex-1 bg-indigo-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                  >
-                    {selling && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
-                    {selling ? 'Saving…' : 'Confirm Sale'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
+          <Modal
+            title="Sell Project (As-Is)"
+            mode="form"
+            isDirty={isFormDirty(sellForm, sellBaseline)}
+            onClose={() => {
+              if (!selling) setShowSellModal(false);
+            }}
+          >
+            <SellProjectModalBody
+              sellForm={sellForm}
+              setSellForm={setSellForm}
+              selling={selling}
+              onSubmit={handleSell}
+            />
+          </Modal>
         )}
 
         {!allowStages ? null : stages.length === 0 ? (
@@ -819,7 +1016,13 @@ export default function ProjectDetailPage({
                 ] : [];
 
                 return (
-                  <div key={stage.id} className="relative flex gap-4 z-10">
+                  <div
+                    id={`stage-${stage.id}`}
+                    key={stage.id}
+                    className={`relative flex gap-4 z-10 rounded-xl transition-shadow ${
+                      highlightStageId === stage.id ? 'ring-2 ring-blue-500 ring-offset-2' : ''
+                    }`}
+                  >
                     <div className={`shrink-0 w-[30px] h-[30px] mt-4 rounded-full border-2 flex items-center justify-center text-xs font-bold z-10
                       ${isCompleted || isActive ? 'text-white' : isOnHold ? 'text-white' : 'text-slate-500'}
                       ${dotColor}`}>

@@ -256,7 +256,7 @@ let AccountingService = class AccountingService {
         }
         return this.findJournalEntry(je.id);
     }
-    async postJournalEntry(id, manager) {
+    async postJournalEntry(id, manager, userId) {
         const jeRepo = manager ? manager.getRepository(journal_entry_entity_1.JournalEntry) : this.jeRepo;
         const jelRepo = manager ? manager.getRepository(journal_entry_line_entity_1.JournalEntryLine) : this.jelRepo;
         const je = await jeRepo.findOne({ where: { id } });
@@ -264,7 +264,11 @@ let AccountingService = class AccountingService {
             throw new common_1.NotFoundException('Journal entry not found');
         if (je.status === 'Posted')
             throw new common_1.BadRequestException('Entry is already posted');
-        await jeRepo.update(id, { status: 'Posted' });
+        await jeRepo.update(id, {
+            status: 'Posted',
+            posted_at: new Date(),
+            ...(userId ? { posted_by: userId } : {}),
+        });
         if (manager) {
             const lines = await jelRepo.find({ where: { journal_entry_id: id } });
             return { ...je, status: 'Posted', lines };

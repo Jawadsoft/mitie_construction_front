@@ -13,6 +13,22 @@ Health/ping are intentionally public.
 
 ---
 
+## Search — `/api/search`
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/search?q=` | Global search (JWT). Min 2 chars. Returns up to ~8 hits per type: `projects`, `land`, `customers`, `sales`, `expenses`, `suppliers` (`{ id, label, sub }`). |
+
+---
+
+## Notifications — `/api/notifications`
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/notifications/summary` | Computed alerts (JWT): low stock, budget exceeded, MR pending approval, overdue installments. `{ items: [{ id, type, title, body, href, created_at }] }`. |
+
+---
+
 ## Auth — `/api/auth`
 
 | Method | Path | Purpose |
@@ -38,12 +54,14 @@ Health/ping are intentionally public.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/projects` | List projects |
+| GET | `/api/projects` | List projects (`?lifecycle=active\|archived\|deleted`; default active = not soft-deleted) |
 | GET | `/api/projects/:id` | Get project |
-| POST | `/api/projects` | Create project (DEVELOPMENT auto-seeds 11 stages) |
-| PATCH | `/api/projects/:id` | Update project |
+| GET | `/api/projects/:id/activity` | Aggregated activity timeline |
+| POST | `/api/projects` | Create project (JWT; sets `created_by`; DEVELOPMENT auto-seeds 11 stages) |
+| PATCH | `/api/projects/:id` | Update project (JWT; sets `updated_by`) |
 | POST | `/api/projects/:id/sell-during-construction` | Mid-construction Sold As-Is sale |
-| DELETE | `/api/projects/:id` | Delete project |
+| DELETE | `/api/projects/:id` | Soft-delete (`deleted_at`; JWT) |
+| POST | `/api/projects/:id/restore` | Clear `deleted_at` (JWT) |
 | GET | `/api/projects/:id/stages` | List stages (includes `actual_cost`) |
 | POST | `/api/projects/:id/stages` | Create stage (+ budget fields via DTO) |
 | PATCH | `/api/projects/stages/:stageId` | Update stage |

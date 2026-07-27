@@ -58,4 +58,10 @@ export class Expense {
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
   updated_at: Date;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  created_by: string | null;
+
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  updated_by: string | null;
 }
