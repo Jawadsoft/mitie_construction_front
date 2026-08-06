@@ -230,3 +230,30 @@ export async function adjustSaleCollection(
   }
   return res.json();
 }
+
+/** Edit one installment collection (amount / date / bank). */
+export async function updateInstallmentCollection(
+  installmentId: string,
+  paid_amount: string,
+  paid_date: string,
+  bank_account_id?: string | null,
+): Promise<Sale> {
+  const res = await fetch(`${BASE}/installments/${installmentId}/collection`, {
+    method: 'PATCH',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      paid_amount,
+      paid_date,
+      bank_account_id: bank_account_id || null,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      Array.isArray(body.message)
+        ? body.message.join(', ')
+        : body.message || 'Failed to update payment',
+    );
+  }
+  return res.json();
+}

@@ -47,4 +47,10 @@ export class SalesController {
   setInstallmentBank(@Param('id') id: string, @Body() dto: { bank_account_id?: string | null }) {
     return this.svc.setInstallmentBank(id, dto.bank_account_id ?? null);
   }
+
+  /** Edit one installment collection (amount / date / bank) — not the sale total. */
+  @Patch('installments/:id/collection')
+  updateInstallmentCollection(@Param('id') id: string, @Body() dto: any) {
+    return this.svc.updateInstallmentCollection(id, dto);
+  }
 }

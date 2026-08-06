@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getProjectActivity } from '../api/projects';
-import type { ProjectActivityItem, ProjectActivityLog } from '../api/projects';
+import type { Project, ProjectActivityItem, ProjectActivityLog as ActivityPayload } from '../api/projects';
+import {
+  TYPE_LABELS,
+  SUBTYPE_LABELS,
+  STRATEGY_LABELS,
+  normalizeProjectFields,
+} from '../api/projects';
+import type { ProjectSubtype } from '../api/projects';
 import Modal from './Modal';
 import { formatDate } from '../utils/date';
 
@@ -17,14 +24,34 @@ const CATEGORY_COLORS: Record<string, string> = {
   Project: 'bg-indigo-100 text-indigo-800',
 };
 
+const STATUS_COLORS: Record<string, string> = {
+  Planning: 'bg-slate-100 text-slate-700',
+  Active: 'bg-green-100 text-green-700',
+  'On Hold': 'bg-yellow-100 text-yellow-700',
+  Completed: 'bg-blue-100 text-blue-700',
+  Sold: 'bg-purple-100 text-purple-700',
+  'Sold During Construction': 'bg-indigo-100 text-indigo-800',
+  Cancelled: 'bg-red-100 text-red-700',
+};
+
 interface Props {
   projectId: string;
   projectName?: string;
+  /** Optional project row — shows summary above the activity timeline */
+  project?: Project | null;
   onClose: () => void;
+  /** Opens the full project workspace (optional) */
+  onOpenProject?: () => void;
 }
 
-export default function ProjectActivityLog({ projectId, projectName, onClose }: Props) {
-  const [data, setData] = useState<ProjectActivityLog | null>(null);
+export default function ProjectActivityLog({
+  projectId,
+  projectName,
+  project,
+  onClose,
+  onOpenProject,
+}: Props) {
+  const [data, setData] = useState<ActivityPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [category, setCategory] = useState('All');
@@ -59,19 +86,107 @@ export default function ProjectActivityLog({ projectId, projectName, onClose }: 
     return list.filter((a) => a.category === category);
   }, [data, category]);
 
+  const titleName = projectName || data?.project_name || project?.name || '';
+  const n = project ? normalizeProjectFields(project) : null;
+  const soldValue = Number(project?.computed?.sold_value ?? 0);
+
   return (
     <Modal
-      title={`Activity Log${projectName || data?.project_name ? ` — ${projectName || data?.project_name}` : ''}`}
+      title={titleName ? `View — ${titleName}` : 'View project'}
       onClose={onClose}
       size="xl"
       mode="view"
+      footer={
+        onOpenProject ? (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-slate-300 text-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-50"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenProject();
+              }}
+              className="rounded bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700"
+            >
+              Open full project
+            </button>
+          </div>
+        ) : undefined
+      }
     >
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-slate-500">
-            {loading ? 'Loading…' : `${rows.length} event${rows.length === 1 ? '' : 's'}`}
-            {data && category !== 'All' ? ` (filtered from ${data.total})` : ''}
-          </p>
+      <div className="space-y-4">
+        {project && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                  STATUS_COLORS[project.status] || 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                {project.status}
+              </span>
+              {n?.project_type && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600">
+                  {TYPE_LABELS[n.project_type]}
+                </span>
+              )}
+              {project.project_subtype && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600">
+                  {SUBTYPE_LABELS[project.project_subtype as ProjectSubtype] || project.project_subtype}
+                </span>
+              )}
+              {n?.project_strategy && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600">
+                  {STRATEGY_LABELS[n.project_strategy]}
+                </span>
+              )}
+            </div>
+            {project.location && (
+              <p className="text-sm text-slate-500">{project.location}</p>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Budget</p>
+                <p className="font-semibold">
+                  {project.total_estimated_budget
+                    ? `PKR ${Number(project.total_estimated_budget).toLocaleString()}`
+                    : '—'}
+                </p>
+              </div>
+              <div className="bg-red-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Actual Paid</p>
+                <p className="font-semibold text-red-600">
+                  PKR {Number(project.computed?.total_paid ?? 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="bg-green-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Actual Collected</p>
+                <p className="font-semibold text-green-700">
+                  PKR {Number(project.computed?.total_collected ?? 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Sales</p>
+                <p className="font-semibold text-green-700">PKR {soldValue.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">Activity</p>
+            <p className="text-xs text-slate-500">
+              {loading ? 'Loading…' : `${rows.length} event${rows.length === 1 ? '' : 's'}`}
+              {data && category !== 'All' ? ` (filtered from ${data.total})` : ''}
+            </p>
+          </div>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
@@ -94,8 +209,8 @@ export default function ProjectActivityLog({ projectId, projectName, onClose }: 
           <p className="text-sm text-slate-400 py-10 text-center">No activity recorded for this project yet.</p>
         ) : (
           <div className="border rounded-xl overflow-hidden">
-            <div className="overflow-x-auto max-h-[60vh]">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto max-h-[50vh]">
+              <table className="w-full text-sm min-w-[640px]">
                 <thead className="bg-slate-50 sticky top-0">
                   <tr>
                     <th className="px-3 py-2 text-left text-slate-600 font-medium w-28">Date</th>

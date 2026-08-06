@@ -126,6 +126,8 @@ export interface Project {
     avg_completion_percent: number;
     stage_count: number;
     total_spent?: number;
+    /** Cash paid out (expense paid_amount + labour). Excludes unpaid bill balances. */
+    total_paid?: number;
     total_collected?: number;
     sold_value?: number;
     profit?: number;

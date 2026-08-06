@@ -892,6 +892,7 @@ export class ProjectsService {
     const rows: Array<{
       id: string;
       total_spent: string;
+      total_paid: string;
       total_collected: string;
       sold_value: string;
       fund_receipts: string;
@@ -903,6 +904,11 @@ export class ProjectsService {
           + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
           + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
         ) AS total_spent,
+        (
+          -- Cash actually paid out (excludes unpaid bill balances)
+          COALESCE((SELECT SUM(CAST(e.paid_amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
+        ) AS total_paid,
         COALESCE((
           SELECT SUM(CAST(s.total_paid AS NUMERIC)) FROM sales s
           JOIN property_units pu ON pu.id = s.property_unit_id
@@ -937,6 +943,7 @@ export class ProjectsService {
     project: Project,
     financials?: {
       total_spent: string;
+      total_paid: string;
       total_collected: string;
       sold_value: string;
       fund_receipts: string;
@@ -956,6 +963,7 @@ export class ProjectsService {
     const budget = Number(project.total_estimated_budget || totalBudget || 0);
     const targetSale = Number(project.target_sale_price || 0);
     const totalSpent = Number(financials?.total_spent || 0);
+    const totalPaid = Number(financials?.total_paid || 0);
     const totalCollected = Number(financials?.total_collected || 0);
     const soldValue = Number(financials?.sold_value || 0);
     const fundReceipts = Number(financials?.fund_receipts || 0);
@@ -970,6 +978,7 @@ export class ProjectsService {
         avg_completion_percent: Math.round(avgCompletion * 100) / 100,
         stage_count: stages.length,
         total_spent: totalSpent,
+        total_paid: totalPaid,
         total_collected: totalCollected,
         sold_value: soldValue,
         profit,

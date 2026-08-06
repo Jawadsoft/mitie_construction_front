@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   getCustomers, createCustomer, updateCustomer, deleteCustomer,
   getPropertyUnits, createPropertyUnit, updatePropertyUnit, deletePropertyUnit,
-  getSales, getSale, createSale, deleteSale, collectSalePayment, adjustSaleCollection
+  getSales, getSale, createSale, deleteSale, collectSalePayment, adjustSaleCollection, updateInstallmentCollection
 } from '../api/sales';
-import type { Customer, PropertyUnit, Sale } from '../api/sales';
+import type { Customer, PropertyUnit, Sale, SaleInstallment } from '../api/sales';
 import { exportCSV, exportExcel } from '../utils/exportUtils';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
@@ -114,6 +114,22 @@ export default function SalesPage({
   const [drawerCustomerSales, setDrawerCustomerSales] = useState<Sale[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
 
+  // Collection details modal (linked from Payment received summary)
+  const [breakdownSale, setBreakdownSale] = useState<Sale | null>(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+
+  const openCollectionDetails = async (s: Sale) => {
+    setBreakdownSale(s);
+    setBreakdownLoading(true);
+    try {
+      setBreakdownSale(await getSale(s.id));
+    } catch {
+      /* keep list-row summary if detail fetch fails */
+    } finally {
+      setBreakdownLoading(false);
+    }
+  };
+
   const openCustomerDetail = async (c: Customer) => {
     setDrawerCustomer(c);
     setDrawerLoading(true);
@@ -144,6 +160,15 @@ export default function SalesPage({
     bank_account_id: '',
     max: 0,
   });
+  const [editInstForm, setEditInstForm] = useState<{
+    installment_id: string;
+    sale_id: string;
+    paid_amount: string;
+    paid_date: string;
+    bank_account_id: string;
+    max: number;
+    label: string;
+  } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -375,6 +400,30 @@ export default function SalesPage({
     setShowModal('edit-collection');
   };
 
+  const openEditIndividualCollection = (
+    sale: Sale,
+    inst: SaleInstallment,
+    index: number,
+  ) => {
+    const otherPaid = (sale.installments ?? [])
+      .filter((i) => i.id !== inst.id)
+      .reduce((sum, i) => sum + Number(i.paid_amount || 0), 0);
+    const saleCap = Math.max(0, Number(sale.total_sale_price) - otherPaid);
+    const dueCap = Number(inst.due_amount);
+    const isCatchUp = !!(inst.notes && /catch-up/i.test(inst.notes));
+    const max = isCatchUp ? saleCap : Math.min(dueCap, saleCap);
+    setEditInstForm({
+      installment_id: inst.id,
+      sale_id: sale.id,
+      paid_amount: String(Number(inst.paid_amount)),
+      paid_date: inst.paid_date || new Date().toISOString().split('T')[0],
+      bank_account_id: inst.bank_account_id || banks[0]?.id || '',
+      max,
+      label: `Payment #${index + 1} · Due ${formatDate(inst.due_date)}`,
+    });
+    setError('');
+  };
+
   const handlePayment = async () => {
     if (!payForm.sale_id || !payForm.paid_amount) {
       setError('Select a sale and enter amount');
@@ -438,6 +487,48 @@ export default function SalesPage({
     }
   };
 
+  const handleEditIndividualCollection = async () => {
+    if (!editInstForm) return;
+    if (editInstForm.paid_amount === '') {
+      setError('Enter the payment amount');
+      return;
+    }
+    const amount = Number(editInstForm.paid_amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError('Amount must be zero or more');
+      return;
+    }
+    if (amount > editInstForm.max + 0.009) {
+      setError(`Cannot exceed PKR ${editInstForm.max.toLocaleString()}`);
+      return;
+    }
+    if (amount > 0.009 && !editInstForm.paid_date) {
+      setError('Payment date is required');
+      return;
+    }
+    setError('');
+    setCollecting(true);
+    try {
+      const updated = await updateInstallmentCollection(
+        editInstForm.installment_id,
+        String(amount),
+        editInstForm.paid_date,
+        editInstForm.bank_account_id || null,
+      );
+      setEditInstForm(null);
+      notify.success('Payment updated');
+      setBreakdownSale(updated);
+      if (selectedSale?.id === editInstForm.sale_id) {
+        setSelectedSale(updated);
+      }
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setCollecting(false);
+    }
+  };
+
   const viewSale = async (id: string) => {
     try { setSelectedSale(await getSale(id)); } catch (e: any) { setError(e.message); }
   };
@@ -486,29 +577,127 @@ export default function SalesPage({
           <div><span className="text-gray-500">Balance Due:</span> <span className="font-medium ml-1 text-red-600">PKR {saleBalance.toLocaleString()}</span></div>
           <div><span className="text-gray-500">Date:</span> <span className="font-medium ml-1">{formatDate(selectedSale.sale_date)}</span></div>
         </div>
-        <h2 className="font-semibold text-gray-800">Installment schedule (auto-applied on collect)</h2>
+        <h2 className="font-semibold text-gray-800">Installment schedule</h2>
         <div className="bg-white rounded-xl border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-4 py-3 text-left text-gray-600">#</th>
                 <th className="px-4 py-3 text-left text-gray-600">Due Date</th>
                 <th className="px-4 py-3 text-right text-gray-600">Due Amount</th>
                 <th className="px-4 py-3 text-right text-gray-600">Paid</th>
+                <th className="px-4 py-3 text-left text-gray-600">Paid Date</th>
                 <th className="px-4 py-3 text-left text-gray-600">Status</th>
               </tr>
             </thead>
             <tbody>
-              {(selectedSale.installments ?? []).map(i => (
+              {(selectedSale.installments ?? []).length === 0 ? (
+                <tr><td colSpan={6} className="text-center text-gray-400 py-6">No installments on this sale.</td></tr>
+              ) : (selectedSale.installments ?? []).map((i, idx) => (
                 <tr key={i.id} className="border-t hover:bg-gray-50">
+                  <td className="px-4 py-3 text-gray-400 text-xs">{idx + 1}</td>
                   <td className="px-4 py-3">{formatDate(i.due_date)}</td>
                   <td className="px-4 py-3 text-right font-mono">{Number(i.due_amount).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-600">{Number(i.paid_amount).toLocaleString()}</td>
-                  <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[i.status]}`}>{i.status}</span></td>
+                  <td className="px-4 py-3 text-right font-mono text-green-600">
+                    {Number(i.paid_amount) > 0 ? Number(i.paid_amount).toLocaleString() : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {i.paid_date ? formatDate(i.paid_date) : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[i.status] ?? 'bg-gray-100 text-gray-700'}`}>{i.status}</span></td>
                 </tr>
               ))}
             </tbody>
+            {(selectedSale.installments ?? []).length > 0 && (
+              <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                <tr>
+                  <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-slate-600">Total</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold text-slate-700">
+                    {(selectedSale.installments ?? []).reduce((s, i) => s + Number(i.due_amount), 0).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold text-green-700">
+                    {(selectedSale.installments ?? []).reduce((s, i) => s + Number(i.paid_amount), 0).toLocaleString()}
+                  </td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
+
+        {/* Collection history grouped by paid date */}
+        {(() => {
+          const paid = (selectedSale.installments ?? []).filter(i => Number(i.paid_amount) > 0 && i.paid_date);
+          if (paid.length === 0) return null;
+
+          // Group by paid_date
+          const byDate = paid.reduce<Record<string, typeof paid>>((acc, i) => {
+            const key = i.paid_date!;
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(i);
+            return acc;
+          }, {});
+          const sortedDates = Object.keys(byDate).sort();
+
+          return (
+            <div className="space-y-2">
+              <h2 className="font-semibold text-gray-800">Collection history by date</h2>
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-gray-600">Collection Date</th>
+                      <th className="px-4 py-3 text-left text-gray-600">Installments Covered</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Amount Collected</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Running Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedDates.reduce<{ rows: React.ReactNode[]; running: number }>(
+                      ({ rows, running }, date) => {
+                        const items = byDate[date];
+                        const dayTotal = items.reduce((s, i) => s + Number(i.paid_amount), 0);
+                        const newRunning = running + dayTotal;
+                        rows.push(
+                          <tr key={date} className="border-t hover:bg-gray-50">
+                            <td className="px-4 py-3 font-medium">{formatDate(date)}</td>
+                            <td className="px-4 py-3 text-gray-500 text-xs">
+                              {items.map((i, idx) => (
+                                <span key={i.id}>
+                                  {idx > 0 && ', '}
+                                  Inst #{(selectedSale.installments ?? []).indexOf(i) + 1} (Due {formatDate(i.due_date)})
+                                </span>
+                              ))}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-semibold text-green-600">
+                              PKR {dayTotal.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono text-slate-600">
+                              PKR {newRunning.toLocaleString()}
+                            </td>
+                          </tr>,
+                        );
+                        return { rows, running: newRunning };
+                      },
+                      { rows: [], running: 0 },
+                    ).rows}
+                  </tbody>
+                  <tfoot className="bg-green-50 border-t-2 border-green-200">
+                    <tr>
+                      <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-green-700">
+                        Total collected across {sortedDates.length} date{sortedDates.length !== 1 ? 's' : ''}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono font-bold text-green-700">
+                        PKR {paid.reduce((s, i) => s + Number(i.paid_amount), 0).toLocaleString()}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
 
         {showModal === 'payment' && (
           <Modal title="Collect against Sale" onClose={() => { if (!collecting) setShowModal(''); }}>
@@ -861,7 +1050,7 @@ export default function SalesPage({
             <div className="px-4 py-3 border-b bg-slate-50">
               <p className="text-sm font-medium text-slate-800">Payment received</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Collections already recorded — Edit total, or Collect more if a balance remains.
+                Open Details to view and edit each payment separately. Collect more if a balance remains.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -889,20 +1078,37 @@ export default function SalesPage({
                       const balance = Number(s.total_sale_price) - Number(s.total_paid);
                       return (
                         <tr key={s.id} className="border-t hover:bg-gray-50">
-                          <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              className="font-medium text-blue-600 hover:underline"
+                              onClick={() => openCollectionDetails(s)}
+                            >
+                              S-{s.id.slice(-6).toUpperCase()}
+                            </button>
+                          </td>
                           <td className="px-4 py-3">{s.customer?.name ?? '—'}</td>
                           <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
                           <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              className="font-mono text-green-600 hover:underline font-medium"
+                              title="View collection details"
+                              onClick={() => openCollectionDetails(s)}
+                            >
+                              {Number(s.total_paid).toLocaleString()}
+                            </button>
+                          </td>
                           <td className="px-4 py-3 text-right font-mono text-red-600">{balance.toLocaleString()}</td>
                           <td className="px-4 py-3 text-center">
                             <div className="inline-flex gap-1.5 justify-center">
                               <button
                                 type="button"
-                                onClick={() => openEditCollection(s)}
-                                className="text-xs rounded border border-blue-200 text-blue-700 px-2.5 py-1.5 hover:bg-blue-50"
+                                onClick={() => openCollectionDetails(s)}
+                                className="text-xs rounded border border-slate-200 text-slate-700 px-2.5 py-1.5 hover:bg-slate-50"
                               >
-                                Edit
+                                Details
                               </button>
                               {balance > 0.009 && (
                                 <button
@@ -924,6 +1130,181 @@ export default function SalesPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Collection details modal — individual payments (not grouped) */}
+      {breakdownSale && !editInstForm && (
+        <Modal
+          title={`Collection details — S-${breakdownSale.id.slice(-6).toUpperCase()}`}
+          onClose={() => setBreakdownSale(null)}
+          size="xl"
+          mode="view"
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Customer</p>
+                <p className="font-medium truncate">{breakdownSale.customer?.name ?? '—'}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Unit</p>
+                <p className="font-medium">{breakdownSale.property_unit?.unit_number ?? '—'}</p>
+              </div>
+              <div className="bg-green-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Collected</p>
+                <p className="font-semibold text-green-700">
+                  PKR {Number(breakdownSale.total_paid).toLocaleString()}
+                </p>
+              </div>
+              <div className="bg-red-50 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Balance</p>
+                <p className="font-semibold text-red-600">
+                  PKR {(Number(breakdownSale.total_sale_price) - Number(breakdownSale.total_paid)).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
+            {breakdownLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-blue-600" />
+              </div>
+            ) : (() => {
+              const installments = breakdownSale.installments ?? [];
+              const paid = installments
+                .map((i, index) => ({ inst: i, index }))
+                .filter(({ inst }) => Number(inst.paid_amount) > 0.009);
+
+              if (paid.length === 0) {
+                return (
+                  <p className="text-sm text-slate-400 text-center py-6">
+                    No individual payments recorded for this sale.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Individual payments
+                  </p>
+                  <div className="border rounded-lg overflow-x-auto">
+                    <table className="w-full text-sm min-w-[640px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2.5 text-left text-gray-600">#</th>
+                          <th className="px-3 py-2.5 text-left text-gray-600">Paid Date</th>
+                          <th className="px-3 py-2.5 text-left text-gray-600">Due Date</th>
+                          <th className="px-3 py-2.5 text-right text-gray-600">Amount</th>
+                          <th className="px-3 py-2.5 text-left text-gray-600">Bank</th>
+                          <th className="px-3 py-2.5 text-center text-gray-600">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paid.map(({ inst, index }) => {
+                          const bank = banks.find((b) => b.id === inst.bank_account_id);
+                          return (
+                            <tr key={inst.id} className="border-t hover:bg-gray-50">
+                              <td className="px-3 py-2.5 text-slate-400">{index + 1}</td>
+                              <td className="px-3 py-2.5 font-medium whitespace-nowrap">
+                                {inst.paid_date ? formatDate(inst.paid_date) : '—'}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                                {formatDate(inst.due_date)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono font-semibold text-green-600">
+                                {Number(inst.paid_amount).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-slate-500 max-w-[140px] truncate">
+                                {bank ? bankLabel(bank) : 'Cash on hand'}
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditIndividualCollection(breakdownSale, inst, index)}
+                                  className="text-xs rounded border border-blue-200 text-blue-700 px-2.5 py-1 hover:bg-blue-50"
+                                >
+                                  Edit
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-green-50 border-t-2 border-green-200">
+                        <tr>
+                          <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-green-700">
+                            {paid.length} payment{paid.length !== 1 ? 's' : ''}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-green-700">
+                            {paid.reduce((sum, { inst }) => sum + Number(inst.paid_amount), 0).toLocaleString()}
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit one individual collection payment */}
+      {editInstForm && (
+        <Modal
+          title="Edit payment"
+          onClose={() => { if (!collecting) { setEditInstForm(null); setError(''); } }}
+        >
+          <div className="space-y-3">
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+            <p className="text-sm text-slate-600">{editInstForm.label}</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (PKR) *</label>
+              <input
+                type="number"
+                min={0}
+                max={editInstForm.max}
+                value={editInstForm.paid_amount}
+                onChange={(e) => setEditInstForm((f) => f ? { ...f, paid_amount: e.target.value } : f)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Max PKR {editInstForm.max.toLocaleString()}. Use 0 to clear this payment only.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paid date *</label>
+              <input
+                type="date"
+                value={editInstForm.paid_date}
+                onChange={(e) => setEditInstForm((f) => f ? { ...f, paid_date: e.target.value } : f)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to (Cash & Bank)</label>
+              <select
+                value={editInstForm.bank_account_id}
+                onChange={(e) => setEditInstForm((f) => f ? { ...f, bank_account_id: e.target.value } : f)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <option value="">Cash on hand (1000)</option>
+                {banks.map((b) => (
+                  <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={handleEditIndividualCollection}
+              disabled={collecting}
+              className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {collecting ? 'Saving…' : 'Save payment'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {showModal === 'unit' && (

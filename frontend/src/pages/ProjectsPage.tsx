@@ -21,10 +21,12 @@ import PlotSizeField from '../components/PlotSizeField';
 import ProjectQuickEntry from '../components/ProjectQuickEntry';
 import type { QuickEntryKind } from '../components/ProjectQuickEntry';
 import ProjectActivityLog from '../components/ProjectActivityLog';
+import ProjectFigureDetail from '../components/ProjectFigureDetail';
+import type { FigureKind } from '../components/ProjectFigureDetail';
 import ColumnPicker from '../components/ColumnPicker';
 import { useConfirm, useRegisterUnsaved } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
-import { formatPlotEquivalents, PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
+import { PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
 import { getMeasurementSettings } from '../api/settings';
 import { parseMoneyInput } from '../utils/money';
 import type { NavQuickAction } from '../types/navIntent';
@@ -42,7 +44,7 @@ const PROJECT_COLUMNS = [
   { id: 'owner', label: 'Owner' },
   { id: 'manager', label: 'Manager' },
   { id: 'budget', label: 'Budget' },
-  { id: 'actual', label: 'Actual' },
+  { id: 'actual', label: 'Actual Paid' },
   { id: 'completion', label: 'Completion' },
   { id: 'created', label: 'Created' },
 ];
@@ -266,7 +268,10 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
   const [editBaseline, setEditBaseline] = useState(emptyForm());
   const [quickEntry, setQuickEntry] = useState<{ project: Project; kind: QuickEntryKind } | null>(null);
   const [activityProject, setActivityProject] = useState<Project | null>(null);
+  const [figureDetail, setFigureDetail] = useState<{ project: Project; kind: FigureKind } | null>(null);
   const [marlaSqft, setMarlaSqft] = useState(PAKISTAN_MARLA_SQFT);
+
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -669,7 +674,7 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                   {isVisible('owner') && <th className="px-4 py-3 text-left text-slate-600">Owner</th>}
                   {isVisible('manager') && <th className="px-4 py-3 text-left text-slate-600">Manager</th>}
                   {isVisible('budget') && <th className="px-4 py-3 text-right text-slate-600">Budget</th>}
-                  {isVisible('actual') && <th className="px-4 py-3 text-right text-slate-600">Actual</th>}
+                  {isVisible('actual') && <th className="px-4 py-3 text-right text-slate-600">Actual Paid</th>}
                   {isVisible('completion') && <th className="px-4 py-3 text-right text-slate-600">Completion</th>}
                   {isVisible('created') && <th className="px-4 py-3 text-left text-slate-600">Created</th>}
                 </tr>
@@ -709,7 +714,7 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                     )}
                     {isVisible('actual') && (
                       <td className="px-4 py-3 text-right font-mono text-red-700">
-                        {Number(p.computed?.total_spent ?? 0).toLocaleString()}
+                        {Number(p.computed?.total_paid ?? 0).toLocaleString()}
                       </td>
                     )}
                     {isVisible('completion') && (
@@ -732,305 +737,337 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map(p => (
-            <div key={p.id} className="bg-white rounded-lg shadow-sm p-4 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <button
-                  className="text-left font-medium text-slate-900 hover:text-slate-600 leading-tight"
-                  onClick={() => onSelectProject(p.id)}
-                >
-                  {p.name}
-                </button>
-                <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-slate-100 text-slate-700'}`}>
-                  {p.status}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(() => {
-                  const n = normalizeProjectFields(p);
-                  return (
+          {filtered.map(p => {
+            const n = normalizeProjectFields(p);
+            const strategy = n.project_strategy;
+            const completion = Number(p.computed?.avg_completion_percent ?? 0);
+            const soldValue = Number(p.computed?.sold_value ?? 0);
+            const budgetUsedPct = Number(p.computed?.budget_used_pct ?? 0);
+            const canSell =
+              strategy === 'DEVELOPMENT' &&
+              !['Sold', 'Sold During Construction', 'Cancelled', 'Completed'].includes(p.status);
+            const isDropOpen = openDropdownId === p.id;
+
+            return (
+              <div
+                key={p.id}
+                className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col gap-4"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    className="text-left font-semibold text-slate-900 hover:text-blue-600 text-base leading-snug"
+                    onClick={() => onSelectProject(p.id)}
+                  >
+                    {p.name}
+                  </button>
+                  <span
+                    className={`shrink-0 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${STATUS_COLORS[p.status] || 'bg-slate-100 text-slate-700'}`}
+                  >
+                    {p.status === 'Active' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                    )}
+                    {p.status}
+                  </span>
+                </div>
+
+                {/* Taxonomy tags */}
+                <div className="flex flex-wrap gap-1.5">
+                  {n.project_type && (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600 font-medium">
+                      {TYPE_LABELS[n.project_type]}
+                    </span>
+                  )}
+                  {p.project_subtype && (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600 font-medium">
+                      {SUBTYPE_LABELS[p.project_subtype as ProjectSubtype] || p.project_subtype}
+                    </span>
+                  )}
+                  {n.project_strategy && (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full border border-slate-300 text-slate-600 font-medium">
+                      {STRATEGY_LABELS[n.project_strategy]}
+                    </span>
+                  )}
+                </div>
+
+                {/* Stats — Plan → Cost → Revenue (aligned 2-column) */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-400">Budget</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'budget' })}
+                    >
+                      {p.total_estimated_budget
+                        ? `PKR ${Number(p.total_estimated_budget).toLocaleString()}`
+                        : '—'}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Target Sale</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'target_sale' })}
+                    >
+                      {p.target_sale_price
+                        ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
+                        : '—'}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Accrued Cost</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-slate-600 hover:text-blue-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'accrued' })}
+                    >
+                      PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Actual Paid</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-red-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'paid' })}
+                    >
+                      PKR {Number(p.computed?.total_paid ?? 0).toLocaleString()}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Sales</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-green-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'sales' })}
+                    >
+                      PKR {soldValue.toLocaleString()}
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Actual Collected</p>
+                    <button
+                      type="button"
+                      className="font-semibold text-green-600 hover:underline text-left"
+                      onClick={() => setFigureDetail({ project: p, kind: 'collected' })}
+                    >
+                      PKR {Number(p.computed?.total_collected ?? 0).toLocaleString()}
+                    </button>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-slate-400">
+                      {soldValue > 0 ? 'Profit' : 'Expected Profit'}
+                    </p>
+                    {(() => {
+                      const accrued = Number(p.computed?.total_spent ?? 0);
+                      const target = Number(p.target_sale_price ?? 0);
+                      const profit =
+                        soldValue > 0
+                          ? soldValue - accrued
+                          : target > 0
+                            ? target - accrued
+                            : null;
+                      if (profit == null) {
+                        return <p className="font-semibold text-slate-400">—</p>;
+                      }
+                      return (
+                        <button
+                          type="button"
+                          className={`font-semibold hover:underline text-left ${
+                            profit >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}
+                          onClick={() => setFigureDetail({ project: p, kind: 'profit' })}
+                        >
+                          PKR {profit.toLocaleString()}
+                        </button>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Progress box */}
+                <div className="bg-slate-50 rounded-lg px-4 py-3 space-y-2">
+                  <p className="text-xs text-center text-slate-500">
+                    Project Progress ({completion}% Completion)
+                  </p>
+                  <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-slate-700 rounded-full transition-all"
+                      style={{ width: `${Math.min(100, Math.max(0, completion))}%` }}
+                    />
+                  </div>
+                  {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
                     <>
-                      {n.project_type && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium">
-                          {TYPE_LABELS[n.project_type]}
-                        </span>
-                      )}
-                      {p.project_subtype && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
-                          {SUBTYPE_LABELS[p.project_subtype as ProjectSubtype] || p.project_subtype}
-                        </span>
-                      )}
-                      {n.project_strategy && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">
-                          {STRATEGY_LABELS[n.project_strategy]}
-                        </span>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-              {p.location && <p className="text-xs text-slate-500">{p.location}</p>}
-              {(() => {
-                const eq = formatPlotEquivalents(
-                  p.plot_size_sqft != null ? Number(p.plot_size_sqft) : null,
-                  marlaSqft,
-                );
-                if (eq) return <p className="text-xs text-slate-600">Plot: {eq}</p>;
-                if (p.plot_size) return <p className="text-xs text-slate-600">Plot: {p.plot_size}</p>;
-                return null;
-              })()}
-              {(() => {
-                const completion = Number(p.computed?.avg_completion_percent ?? 0);
-                const soldValue = Number(p.computed?.sold_value ?? 0);
-                const profitPending = soldValue <= 0;
-                const strategy = normalizeProjectFields(p).project_strategy;
-                const canSell =
-                  strategy === 'DEVELOPMENT' &&
-                  !['Sold', 'Sold During Construction', 'Cancelled', 'Completed'].includes(p.status);
-                return (
-                  <>
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-400">Completion</span>
-                        <span className="font-medium">{completion}%</span>
-                      </div>
-                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <p className="text-xs text-center text-slate-500 pt-1">
+                        Budget Used ({budgetUsedPct}%)
+                      </p>
+                      <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-slate-900 rounded-full transition-all"
-                          style={{ width: `${Math.min(100, Math.max(0, completion))}%` }}
+                          className="h-full bg-amber-400 rounded-full transition-all"
+                          style={{ width: `${Math.min(100, budgetUsedPct)}%` }}
                         />
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <p className="text-slate-400">Budget</p>
-                        <p className="font-medium">
-                          {p.total_estimated_budget
-                            ? `PKR ${Number(p.total_estimated_budget).toLocaleString()}`
-                            : '—'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400">Actual</p>
-                        <p className="font-medium text-red-700">
-                          PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400">Target Sale</p>
-                        <p className="font-medium">
-                          {p.target_sale_price
-                            ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
-                            : '—'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400">Sales</p>
-                        <p className="font-medium text-green-700">
-                          PKR {soldValue.toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs rounded bg-slate-50 px-2 py-1.5">
-                      <span className="text-slate-500">Profit</span>
-                      {profitPending ? (
-                        <span className="font-semibold text-amber-700">Pending</span>
-                      ) : (
-                        <span
-                          className={`font-semibold font-mono ${
-                            Number(p.computed?.profit ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'
-                          }`}
-                        >
-                          PKR {Number(p.computed?.profit ?? 0).toLocaleString()}
-                          <span className="text-slate-400 font-normal ml-1">
-                            ({p.computed?.profit_margin_pct ?? 0}%)
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                    {Number(p.computed?.total_collected ?? 0) > 0 && (
-                      <p className="text-xs text-slate-500">
-                        Collected: PKR {Number(p.computed?.total_collected).toLocaleString()}
-                      </p>
-                    )}
-                    {(Number(p.total_estimated_budget) > 0 || Number(p.computed?.total_spent) > 0) && (
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-slate-400">Budget used</span>
-                          <span className="font-medium">{p.computed?.budget_used_pct ?? 0}%</span>
-                        </div>
-                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-amber-500 rounded-full transition-all"
-                            style={{ width: `${p.computed?.budget_used_pct ?? 0}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {(Number(p.target_sale_price) > 0 || Number(p.computed?.total_collected) > 0) && (
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-slate-400">Sale collections</span>
-                          <span className="font-medium">{p.computed?.collection_pct ?? 0}%</span>
-                        </div>
-                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-green-600 rounded-full transition-all"
-                            style={{ width: `${p.computed?.collection_pct ?? 0}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {Number(p.computed?.fund_receipts) > 0 && (
-                      <p className="text-xs text-slate-500">
-                        Fund receipts: PKR {Number(p.computed?.fund_receipts).toLocaleString()}
-                      </p>
-                    )}
+                    </>
+                  )}
+                </div>
 
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <button
-                        type="button"
-                        className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50 font-medium"
-                        onClick={() => onSelectProject(p.id)}
-                      >
-                        View
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs rounded border border-red-200 text-red-700 px-2 py-1 hover:bg-red-50"
-                        onClick={() => setQuickEntry({ project: p, kind: 'expense' })}
-                      >
-                        Expense
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs rounded border border-slate-300 text-slate-700 px-2 py-1 hover:bg-slate-50"
-                        onClick={() => setQuickEntry({ project: p, kind: 'payment' })}
-                      >
-                        Payment
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs rounded border border-green-200 text-green-700 px-2 py-1 hover:bg-green-50"
-                        onClick={() => setQuickEntry({ project: p, kind: 'collection' })}
-                      >
-                        Collection
-                      </button>
-                      {strategy === 'DEVELOPMENT' && (
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-indigo-200 text-indigo-700 px-2 py-1 hover:bg-indigo-50"
-                          onClick={() => onQuickAction(p.id, 'update-stage')}
-                        >
-                          Stage Update
-                        </button>
-                      )}
-                    </div>
+                {/* Action buttons */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    className="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700"
+                    onClick={() => setActivityProject(p)}
+                  >
+                    View
+                  </button>
 
-                    {strategy === 'DEVELOPMENT' && (
-                      <div className="flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-orange-200 text-orange-700 px-2 py-1 hover:bg-orange-50"
-                          onClick={() => onQuickAction(p.id, 'issue-material')}
-                        >
-                          Issue Material
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-teal-200 text-teal-700 px-2 py-1 hover:bg-teal-50"
-                          onClick={() => onQuickAction(p.id, 'add-labour')}
-                        >
-                          Add Labour
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-amber-200 text-amber-800 px-2 py-1 hover:bg-amber-50"
-                          onClick={() => onQuickAction(p.id, 'purchase-material')}
-                        >
-                          Purchase Material
-                        </button>
-                        {canSell && (
-                          <button
-                            type="button"
-                            className="text-xs rounded border border-purple-200 text-purple-700 px-2 py-1 hover:bg-purple-50"
-                            onClick={() => onQuickAction(p.id, 'sell-project')}
-                          >
-                            Sell Project
-                          </button>
-                        )}
-                      </div>
-                    )}
+                  {strategy === 'DIRECT_SALE' && (
+                    <button
+                      type="button"
+                      className="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700"
+                      onClick={() => onQuickAction(p.id, 'record-sale')}
+                    >
+                      Record Sale
+                    </button>
+                  )}
+                  {strategy === 'DEVELOPMENT' && canSell && (
+                    <button
+                      type="button"
+                      className="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700"
+                      onClick={() => onQuickAction(p.id, 'sell-project')}
+                    >
+                      Sell Project
+                    </button>
+                  )}
 
-                    {strategy === 'DIRECT_SALE' && (
-                      <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    className="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700"
+                    onClick={() => setQuickEntry({ project: p, kind: 'collection' })}
+                  >
+                    Collection
+                  </button>
+
+                  {/* More Actions dropdown */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="rounded border border-blue-400 text-blue-600 px-3 py-1.5 text-sm font-medium hover:bg-blue-50 inline-flex items-center gap-1"
+                      onClick={() => setOpenDropdownId(isDropOpen ? null : p.id)}
+                    >
+                      More Actions
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {isDropOpen && (
+                      <div
+                        className="absolute left-0 top-full mt-1 z-20 bg-white border border-slate-200 rounded-lg shadow-lg py-1 min-w-[160px]"
+                        onMouseLeave={() => setOpenDropdownId(null)}
+                      >
                         <button
                           type="button"
-                          className="text-xs rounded border border-emerald-200 text-emerald-700 px-2 py-1 hover:bg-emerald-50"
-                          onClick={() => onQuickAction(p.id, 'record-sale')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          onClick={() => { setOpenDropdownId(null); setQuickEntry({ project: p, kind: 'expense' }); }}
                         >
-                          Record Sale
+                          Expense
                         </button>
                         <button
                           type="button"
-                          className="text-xs rounded border border-blue-200 text-blue-700 px-2 py-1 hover:bg-blue-50"
-                          onClick={() => onQuickAction(p.id, 'view-profit')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          onClick={() => { setOpenDropdownId(null); setQuickEntry({ project: p, kind: 'payment' }); }}
+                        >
+                          Payment
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          onClick={() => { setOpenDropdownId(null); onQuickAction(p.id, 'view-profit'); }}
                         >
                           View Profit
                         </button>
+                        {strategy === 'DEVELOPMENT' && (
+                          <>
+                            <button
+                              type="button"
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                              onClick={() => { setOpenDropdownId(null); onQuickAction(p.id, 'update-stage'); }}
+                            >
+                              Stage Update
+                            </button>
+                            <button
+                              type="button"
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                              onClick={() => { setOpenDropdownId(null); onQuickAction(p.id, 'issue-material'); }}
+                            >
+                              Issue Material
+                            </button>
+                            <button
+                              type="button"
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                              onClick={() => { setOpenDropdownId(null); onQuickAction(p.id, 'add-labour'); }}
+                            >
+                              Add Labour
+                            </button>
+                            <button
+                              type="button"
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                              onClick={() => { setOpenDropdownId(null); onQuickAction(p.id, 'purchase-material'); }}
+                            >
+                              Purchase Material
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          onClick={() => { setOpenDropdownId(null); notify.info('Document upload coming soon'); }}
+                        >
+                          Upload Document
+                        </button>
+                        <div className="border-t border-slate-100 my-1" />
+                        <button
+                          type="button"
+                          className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-slate-50"
+                          disabled={lifecycle === 'deleted'}
+                          onClick={() => { setOpenDropdownId(null); openEdit(p); }}
+                        >
+                          Edit
+                        </button>
                       </div>
                     )}
+                  </div>
 
-                    <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+                  {/* Delete / Restore — pushed to the right */}
+                  <div className="ml-auto">
+                    {lifecycle === 'deleted' ? (
                       <button
                         type="button"
-                        className="text-xs rounded border border-violet-200 text-violet-700 px-2 py-1 hover:bg-violet-50"
-                        onClick={() => onQuickAction(p.id, 'view-activity')}
+                        className="rounded border border-green-500 text-green-700 px-4 py-1.5 text-sm font-medium hover:bg-green-50"
+                        onClick={() => handleRestore(p.id, p.name)}
                       >
-                        Activity
+                        Restore
                       </button>
+                    ) : (
                       <button
                         type="button"
-                        className="text-xs rounded border border-sky-200 text-sky-700 px-2 py-1 hover:bg-sky-50"
-                        onClick={() => notify.info('Document upload coming soon')}
+                        className="rounded border border-red-400 text-red-600 px-4 py-1.5 text-sm font-medium hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+                        disabled={!!deletingId}
+                        onClick={() => handleDelete(p.id, p.name)}
                       >
-                        Upload Document
+                        {deletingId === p.id && (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />
+                        )}
+                        {deletingId === p.id ? 'Deleting…' : 'Delete'}
                       </button>
-                      <button
-                        type="button"
-                        className="text-xs rounded border border-blue-200 text-blue-600 px-2 py-1 hover:bg-blue-50 disabled:opacity-50"
-                        disabled={!!deletingId || lifecycle === 'deleted'}
-                        onClick={() => openEdit(p)}
-                      >
-                        Edit
-                      </button>
-                      {lifecycle === 'deleted' ? (
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-green-200 text-green-700 px-2 py-1 hover:bg-green-50"
-                          onClick={() => handleRestore(p.id, p.name)}
-                        >
-                          Restore
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="text-xs rounded border border-red-200 text-red-600 px-2 py-1 hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
-                          disabled={!!deletingId}
-                          onClick={() => handleDelete(p.id, p.name)}
-                        >
-                          {deletingId === p.id && (
-                            <span className="h-3 w-3 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />
-                          )}
-                          {deletingId === p.id ? 'Deleting…' : 'Delete'}
-                        </button>
-                      )}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          ))}
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1179,7 +1216,17 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
         <ProjectActivityLog
           projectId={activityProject.id}
           projectName={activityProject.name}
+          project={activityProject}
           onClose={() => setActivityProject(null)}
+          onOpenProject={() => onSelectProject(activityProject.id)}
+        />
+      )}
+
+      {figureDetail && (
+        <ProjectFigureDetail
+          project={figureDetail.project}
+          kind={figureDetail.kind}
+          onClose={() => setFigureDetail(null)}
         />
       )}
     </div>

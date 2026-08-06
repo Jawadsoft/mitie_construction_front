@@ -532,6 +532,137 @@ export class SalesService {
     });
   }
 
+  /**
+   * Edit one installment collection (amount / date / bank) without regrouping
+   * the whole sale total. Rebuilds that installment's PMT journal and
+   * recalculates sale.total_paid from all installments.
+   */
+  async updateInstallmentCollection(
+    installment_id: string,
+    dto: {
+      paid_amount: string | number;
+      paid_date: string;
+      bank_account_id?: string | null;
+    },
+  ) {
+    const newPaid = Math.round(Number(dto.paid_amount) * 100) / 100;
+    if (!Number.isFinite(newPaid) || newPaid < 0) {
+      throw new BadRequestException('paid_amount must be zero or more');
+    }
+    if (newPaid > 0.009 && !dto.paid_date) {
+      throw new BadRequestException('paid_date is required when amount > 0');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const installRepo = manager.getRepository(SaleInstallment);
+      const saleRepo = manager.getRepository(Sale);
+      const unitRepo = manager.getRepository(PropertyUnit);
+
+      const inst = await installRepo.findOne({ where: { id: installment_id } });
+      if (!inst) throw new NotFoundException('Installment not found');
+
+      const sale = await saleRepo.findOne({ where: { id: inst.sale_id } });
+      if (!sale) throw new NotFoundException('Sale not found');
+      if (sale.status === 'Cancelled') {
+        throw new BadRequestException('Cannot edit collection on a cancelled sale');
+      }
+
+      const siblings = await installRepo.find({ where: { sale_id: sale.id } });
+      const otherPaid = siblings
+        .filter((s) => s.id !== installment_id)
+        .reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
+      const salePrice = Number(sale.total_sale_price);
+      if (otherPaid + newPaid > salePrice + 0.009) {
+        throw new BadRequestException(
+          `Amount would exceed sale price. Max for this payment: PKR ${(salePrice - otherPaid).toFixed(2)}`,
+        );
+      }
+
+      const due = Number(inst.due_amount);
+      const isCatchUp = !!(inst.notes && /catch-up/i.test(inst.notes));
+      if (!isCatchUp && newPaid > due + 0.009) {
+        throw new BadRequestException(
+          `Amount cannot exceed installment due (${due.toFixed(2)})`,
+        );
+      }
+
+      await this.accounting.deleteJournalsByReferencePrefix(
+        `PMT-${installment_id}`,
+        manager,
+      );
+
+      const nextDue = isCatchUp && newPaid > 0.009 ? newPaid : due;
+      const status =
+        newPaid <= 0.009
+          ? 'Pending'
+          : newPaid >= nextDue - 0.009
+            ? 'Paid'
+            : 'Partial';
+
+      await installRepo.update(installment_id, {
+        paid_amount: newPaid.toFixed(2),
+        paid_date: newPaid > 0.009 ? dto.paid_date : null,
+        status,
+        bank_account_id:
+          dto.bank_account_id !== undefined
+            ? dto.bank_account_id || null
+            : inst.bank_account_id,
+        ...(isCatchUp && newPaid > 0.009
+          ? { due_amount: newPaid.toFixed(2) }
+          : {}),
+      });
+
+      if (newPaid > 0.009) {
+        const unit = await unitRepo.findOne({
+          where: { id: sale.property_unit_id },
+        });
+        await this.accounting.postSalePaymentJournal(
+          sale,
+          newPaid.toFixed(2),
+          {
+            installment_id,
+            paid_date: dto.paid_date,
+            project_id: unit?.project_id ?? null,
+            bank_account_id:
+              dto.bank_account_id !== undefined
+                ? dto.bank_account_id || null
+                : inst.bank_account_id,
+            reference_no: `PMT-${installment_id}`,
+          },
+          manager,
+        );
+      }
+
+      const refreshed = await installRepo.find({ where: { sale_id: sale.id } });
+      const totalPaid = refreshed.reduce(
+        (sum, s) => sum + Number(s.paid_amount || 0),
+        0,
+      );
+      const fullyPaid = totalPaid >= salePrice - 0.009;
+      await saleRepo.update(sale.id, {
+        total_paid: totalPaid.toFixed(2),
+        status:
+          sale.status === 'Cancelled'
+            ? sale.status
+            : fullyPaid
+              ? 'Completed'
+              : sale.status === 'Completed'
+                ? 'Active'
+                : sale.status,
+      });
+
+      const full = await saleRepo.findOne({
+        where: { id: sale.id },
+        relations: ['customer', 'property_unit'],
+      });
+      const installments = await installRepo.find({
+        where: { sale_id: sale.id },
+        order: { due_date: 'ASC', id: 'ASC' },
+      });
+      return { ...full!, installments };
+    });
+  }
+
   async updateCustomer(id: string, dto: Partial<Customer>) {
     await this.custRepo.update(id, dto);
     return this.custRepo.findOne({ where: { id } });
