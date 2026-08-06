@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { Customer } from './entities/customer.entity';
 import { PropertyUnit } from './entities/property-unit.entity';
 import { Sale } from './entities/sale.entity';
@@ -58,7 +58,23 @@ export class SalesService {
     if (project_id)
       q.andWhere('property_unit.project_id = :pid', { pid: project_id });
     if (customer_id) q.andWhere('s.customer_id = :cid', { cid: customer_id });
-    return q.getMany();
+    const sales = await q.getMany();
+    if (!sales.length) return sales;
+
+    const installments = await this.installRepo.find({
+      where: { sale_id: In(sales.map((s) => s.id)) },
+      order: { due_date: 'ASC' },
+    });
+    const bySale = new Map<string, SaleInstallment[]>();
+    for (const inst of installments) {
+      const list = bySale.get(inst.sale_id) ?? [];
+      list.push(inst);
+      bySale.set(inst.sale_id, list);
+    }
+    return sales.map((s) => ({
+      ...s,
+      installments: bySale.get(s.id) ?? [],
+    }));
   }
 
   async findOneSale(id: string) {
@@ -678,12 +694,21 @@ export class SalesService {
     return { deleted: true };
   }
 
-  async updateSale(id: string, dto: Partial<Sale>) {
+  async updateSale(
+    id: string,
+    dto: Partial<Sale> & {
+      installments?: Array<Partial<SaleInstallment> & { id?: string }>;
+    },
+  ) {
     return this.dataSource.transaction(async (manager) => {
       const saleRepo = manager.getRepository(Sale);
       const unitRepo = manager.getRepository(PropertyUnit);
+      const installRepo = manager.getRepository(SaleInstallment);
       const sale = await saleRepo.findOne({ where: { id } });
       if (!sale) throw new NotFoundException('Sale not found');
+      if (sale.status === 'Cancelled') {
+        throw new BadRequestException('Cannot edit a cancelled sale');
+      }
 
       const nextPrice =
         dto.total_sale_price !== undefined
@@ -703,11 +728,66 @@ export class SalesService {
       if (dto.total_sale_price !== undefined) patch.total_sale_price = nextPrice;
       if (dto.notes !== undefined) patch.notes = dto.notes || null;
       if (dto.customer_id !== undefined) patch.customer_id = dto.customer_id;
+
       if (dto.status !== undefined && ['Active', 'Cancelled', 'Completed'].includes(dto.status)) {
         patch.status = dto.status;
+      } else if (dto.total_sale_price !== undefined) {
+        // Keep Active/Completed in sync when price changes
+        if (Number(sale.total_paid) >= Number(nextPrice) - 0.009) {
+          patch.status = 'Completed';
+        } else if (sale.status === 'Completed') {
+          patch.status = 'Active';
+        }
       }
+
       if (Object.keys(patch).length) {
         await saleRepo.update(id, patch);
+      }
+
+      if (Array.isArray(dto.installments)) {
+        for (const row of dto.installments) {
+          if (row.id) {
+            const inst = await installRepo.findOne({
+              where: { id: String(row.id), sale_id: id },
+            });
+            if (!inst) continue;
+            const paid = Number(inst.paid_amount);
+            const nextDueAmount =
+              row.due_amount !== undefined && row.due_amount !== null
+                ? Number(row.due_amount).toFixed(2)
+                : inst.due_amount;
+            if (Number(nextDueAmount) + 0.009 < paid) {
+              throw new BadRequestException(
+                `Installment due amount cannot be less than paid (PKR ${paid.toFixed(2)})`,
+              );
+            }
+            const instPatch: Partial<SaleInstallment> = {};
+            if (row.due_date) instPatch.due_date = row.due_date;
+            if (row.due_amount !== undefined && row.due_amount !== null) {
+              instPatch.due_amount = nextDueAmount;
+            }
+            if (paid <= 0.009) {
+              instPatch.status = 'Pending';
+            } else if (paid >= Number(nextDueAmount) - 0.009) {
+              instPatch.status = 'Paid';
+            } else {
+              instPatch.status = 'Partial';
+            }
+            if (Object.keys(instPatch).length) {
+              await installRepo.update(inst.id, instPatch);
+            }
+          } else if (row.due_date && row.due_amount != null && Number(row.due_amount) > 0) {
+            await installRepo.save(
+              installRepo.create({
+                sale_id: id,
+                due_date: row.due_date,
+                due_amount: Number(row.due_amount).toFixed(2),
+                paid_amount: '0.00',
+                status: 'Pending',
+              }),
+            );
+          }
+        }
       }
 
       const updated = await saleRepo.findOne({ where: { id } });
@@ -720,10 +800,15 @@ export class SalesService {
         await this.accounting.postSaleJournal(updated, unit?.project_id ?? null, manager);
       }
 
-      return saleRepo.findOne({
+      const installments = await installRepo.find({
+        where: { sale_id: id },
+        order: { due_date: 'ASC' },
+      });
+      const full = await saleRepo.findOne({
         where: { id },
         relations: ['customer', 'property_unit'],
       });
+      return { ...full!, installments };
     });
   }
 

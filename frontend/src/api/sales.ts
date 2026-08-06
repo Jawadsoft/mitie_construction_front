@@ -144,13 +144,23 @@ export async function deletePropertyUnit(id: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete unit');
 }
 
-export async function updateSale(id: string, dto: Partial<Sale>): Promise<Sale> {
+export async function updateSale(
+  id: string,
+  dto: Partial<Sale> & {
+    installments?: Array<Partial<SaleInstallment> & { id?: string }>;
+  },
+): Promise<Sale> {
   const res = await fetch(`${BASE}/list/${id}`, {
     method: 'PATCH', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
   });
-  if (!res.ok) throw new Error('Failed to update sale');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      Array.isArray(data.message) ? data.message.join(', ') : data.message || 'Failed to update sale',
+    );
+  }
+  return data;
 }
 
 export async function deleteSale(id: string): Promise<void> {

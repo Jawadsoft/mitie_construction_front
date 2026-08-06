@@ -60,9 +60,17 @@ export interface SupplierPayable {
 }
 
 export interface ReceivableRow {
-  customer_id: string; customer_name: string; phone: string;
-  sale_id: string; unit_number: string;
-  total_due: number; total_paid: number; balance: number; overdue: number;
+  customer_id: string;
+  customer_name: string;
+  phone: string;
+  sale_id: string;
+  unit_number: string;
+  project_id?: string;
+  project_name?: string;
+  total_due: number;
+  total_paid: number;
+  balance: number;
+  overdue: number;
 }
 
 export interface LabourCost {
@@ -123,8 +131,14 @@ export const getProfitLoss = (from?: string, to?: string) => {
   return get<ProfitLoss>(`${BASE}/profit-loss?${params}`);
 };
 
-export const getSupplierPayables = () => get<SupplierPayable[]>(`${BASE}/supplier-payables`);
-export const getReceivables = () => get<ReceivableRow[]>(`${BASE}/receivables`);
+export const getSupplierPayables = (project_id?: string) =>
+  get<SupplierPayable[]>(
+    `${BASE}/supplier-payables${project_id ? `?project_id=${project_id}` : ''}`,
+  );
+export const getReceivables = (project_id?: string) =>
+  get<ReceivableRow[]>(
+    `${BASE}/receivables${project_id ? `?project_id=${project_id}` : ''}`,
+  );
 
 export const getLabourCost = (project_id?: string) =>
   get<LabourCost>(`${BASE}/labour-cost${project_id ? `?project_id=${project_id}` : ''}`);

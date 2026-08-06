@@ -265,9 +265,14 @@ export class ReportsService {
   }
 
   // ─── Supplier Payables ────────────────────────────────────────────────────
-  async getSupplierPayables() {
+  async getSupplierPayables(project_id?: string) {
     // Outstanding BILL expenses (AP), plus PO totals for context — separate subqueries (no join fan-out)
-    const rows = await this.q(`
+    const params = project_id ? [project_id] : [];
+    const expenseProjectFilter = project_id ? ' AND e.project_id = $1' : '';
+    const poProjectFilter = project_id ? ' AND po.project_id = $1' : '';
+
+    const rows = await this.q(
+      `
       SELECT
         s.id AS supplier_id,
         s.name AS supplier_name,
@@ -276,11 +281,13 @@ export class ReportsService {
           SELECT SUM(CAST(po.total_amount AS NUMERIC))
           FROM purchase_orders po
           WHERE po.supplier_id = s.id AND po.status != 'Cancelled'
+          ${poProjectFilter}
         ), 0) AS total_ordered,
         COALESCE((
           SELECT SUM(CAST(e.paid_amount AS NUMERIC))
           FROM expenses e
           WHERE e.supplier_id = s.id AND e.vendor_type = 'SUPPLIER'
+          ${expenseProjectFilter}
         ), 0) AS total_paid,
         COALESCE((
           SELECT SUM(CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC))
@@ -289,29 +296,47 @@ export class ReportsService {
             AND e.vendor_type = 'SUPPLIER'
             AND e.entry_mode = 'BILL'
             AND e.status IN ('Unpaid', 'Partial')
+            ${expenseProjectFilter}
         ), 0) AS balance_due
       FROM suppliers s
       WHERE s.is_active = true
       ORDER BY balance_due DESC
-    `);
-    return rows.map((r: any) => ({
-      ...r,
-      total_ordered: Number(r.total_ordered),
-      total_paid: Number(r.total_paid),
-      balance_due: Number(r.balance_due),
-    }));
+    `,
+      params,
+    );
+    return rows
+      .map((r: any) => ({
+        ...r,
+        total_ordered: Number(r.total_ordered),
+        total_paid: Number(r.total_paid),
+        balance_due: Number(r.balance_due),
+      }))
+      .filter((r: any) =>
+        project_id
+          ? r.balance_due > 0.009 || r.total_ordered > 0.009 || r.total_paid > 0.009
+          : true,
+      );
   }
 
   // ─── Customer Receivables ─────────────────────────────────────────────────
-  async getReceivablesAging() {
+  async getReceivablesAging(project_id?: string) {
     const today = new Date().toISOString().split('T')[0];
-    const rows = await this.q(`
+    const params: string[] = [];
+    let projectClause = '';
+    if (project_id) {
+      params.push(project_id);
+      projectClause = ` AND pu.project_id = $1`;
+    }
+    const rows = await this.q(
+      `
       SELECT
         c.id AS customer_id,
         c.name AS customer_name,
         c.phone,
         s.id AS sale_id,
         pu.unit_number,
+        pu.project_id,
+        p.name AS project_name,
         CAST(s.total_sale_price AS NUMERIC) AS total_due,
         CAST(s.total_paid AS NUMERIC) AS total_paid,
         CAST(s.total_sale_price AS NUMERIC) - CAST(s.total_paid AS NUMERIC) AS balance,
@@ -325,9 +350,13 @@ export class ReportsService {
       FROM customers c
       JOIN sales s ON s.customer_id = c.id AND s.status != 'Cancelled'
       JOIN property_units pu ON pu.id = s.property_unit_id
+      JOIN projects p ON p.id = pu.project_id
       WHERE CAST(s.total_sale_price AS NUMERIC) > CAST(s.total_paid AS NUMERIC)
+      ${projectClause}
       ORDER BY overdue DESC, balance DESC
-    `);
+    `,
+      params,
+    );
     return rows.map((r: any) => ({
       ...r,
       total_due: Number(r.total_due),

@@ -66,6 +66,10 @@ export class ExpensesService {
     const amount = Number(dto.amount).toFixed(2);
     const paid_amount = entry_mode === 'DIRECT' ? amount : '0.00';
     const status = entry_mode === 'DIRECT' ? 'Paid' : 'Unpaid';
+    const due_date =
+      entry_mode === 'BILL'
+        ? (dto.due_date || dto.expense_date || null)
+        : null;
 
     return this.dataSource.transaction(async (manager) => {
       const expense = await manager.getRepository(Expense).save(
@@ -74,6 +78,7 @@ export class ExpensesService {
           entry_mode,
           payment_type,
           bank_account_id: entry_mode === 'BILL' ? null : dto.bank_account_id || null,
+          due_date,
           amount,
           paid_amount,
           status,
@@ -232,6 +237,11 @@ export class ExpensesService {
         payment_type,
         bank_account_id,
         ...(dto.expense_date !== undefined ? { expense_date: dto.expense_date } : {}),
+        ...(entry_mode === 'BILL' && dto.due_date !== undefined
+          ? { due_date: dto.due_date || null }
+          : entry_mode === 'DIRECT'
+            ? { due_date: null }
+            : {}),
         amount: nextAmount,
         paid_amount,
         status,

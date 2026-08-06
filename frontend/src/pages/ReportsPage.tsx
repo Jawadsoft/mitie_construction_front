@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   getBudgetVsActual, getStageBudget, getProfitability, getProfitLoss,
   getSupplierPayables, getReceivables, getLabourCost, getCashflowReport, getExpenseBreakdown,
@@ -13,8 +14,14 @@ import type {
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
 import type { NavIntent } from '../types/navIntent';
+import { formatPkrThousands, formatPkrFull } from '../utils/money';
 
 type ReportTab = 'profitability' | 'budget' | 'pl' | 'partners-equity' | 'cashflow' | 'payables' | 'receivables' | 'labour' | 'expenses';
+
+const VALID_TABS: ReportTab[] = [
+  'profitability', 'budget', 'pl', 'partners-equity', 'cashflow',
+  'payables', 'receivables', 'labour', 'expenses',
+];
 
 function fmt(n: number) {
   if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -42,9 +49,12 @@ export default function ReportsPage({
   initialIntent?: NavIntent;
   onIntentConsumed?: () => void;
 } = {}) {
-  const [tab, setTab] = useState<ReportTab>('profitability');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const initialTab = (VALID_TABS.includes(tabParam as ReportTab) ? tabParam : 'profitability') as ReportTab;
+  const [tab, setTab] = useState<ReportTab>(initialTab);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState('');
+  const [selectedProject, setSelectedProject] = useState(searchParams.get('project') ?? '');
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -71,6 +81,16 @@ export default function ReportsPage({
     onIntentConsumed?.();
   }, [initialIntent]);
 
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (tab !== 'profitability') next.set('tab', tab);
+    if (selectedProject) next.set('project', selectedProject);
+    const want = next.toString();
+    const curr = searchParams.toString();
+    if (want !== curr) setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync URL from tab/project only
+  }, [tab, selectedProject]);
+
   const loadReport = async () => {
     setLoading(true); setError('');
     try {
@@ -84,8 +104,8 @@ export default function ReportsPage({
         case 'pl': setPlData(await getProfitLoss(dateFrom || undefined, dateTo || undefined)); break;
         case 'partners-equity': setPartnersEquity(await getPartnersEquity(dateTo || undefined)); break;
         case 'cashflow': setCashflowData(await getCashflowReport(period, dateFrom || undefined, dateTo || undefined)); break;
-        case 'payables': setPayablesData(await getSupplierPayables()); break;
-        case 'receivables': setReceivablesData(await getReceivables()); break;
+        case 'payables': setPayablesData(await getSupplierPayables(selectedProject || undefined)); break;
+        case 'receivables': setReceivablesData(await getReceivables(selectedProject || undefined)); break;
         case 'labour': setLabourData(await getLabourCost(selectedProject || undefined)); break;
         case 'expenses': setExpenseData(await getExpenseBreakdown(selectedProject || undefined)); break;
       }
@@ -203,7 +223,7 @@ export default function ReportsPage({
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        {['profitability', 'budget', 'labour', 'expenses'].includes(tab) && (
+        {['profitability', 'budget', 'labour', 'expenses', 'payables', 'receivables'].includes(tab) && (
           <select value={selectedProject} onChange={e => setSelectedProject(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">All Projects</option>
@@ -638,7 +658,9 @@ export default function ReportsPage({
 
           {/* ─── Supplier Payables ─── */}
           {tab === 'payables' && (
-            <div className="bg-white rounded-xl border overflow-hidden">
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500">Amounts in thousands (K). Hover a figure for the full PKR amount.</p>
+              <div className="bg-white rounded-xl border overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50"><tr>
@@ -655,35 +677,60 @@ export default function ReportsPage({
                       <tr key={r.supplier_id} className="border-t hover:bg-gray-50">
                         <td className="px-4 py-3 font-medium">{r.supplier_name}</td>
                         <td className="px-4 py-3 text-gray-500">{r.phone ?? '-'}</td>
-                        <td className="px-4 py-3 text-right font-mono">{fmt(r.total_ordered)}</td>
-                        <td className="px-4 py-3 text-right font-mono text-green-600">{fmt(r.total_paid)}</td>
-                        <td className={`px-4 py-3 text-right font-mono font-bold ${r.balance_due > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {fmt(r.balance_due)}
+                        <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(r.total_ordered)}>
+                          {formatPkrThousands(r.total_ordered)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-green-600" title={formatPkrFull(r.total_paid)}>
+                          {formatPkrThousands(r.total_paid)}
+                        </td>
+                        <td
+                          className={`px-4 py-3 text-right font-mono font-bold ${r.balance_due > 0 ? 'text-red-600' : 'text-green-600'}`}
+                          title={formatPkrFull(r.balance_due)}
+                        >
+                          {formatPkrThousands(r.balance_due)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  {payablesData.length > 0 && (
-                    <tfoot className="bg-gray-50 border-t font-bold">
-                      <tr>
-                        <td colSpan={4} className="px-4 py-3">Total Balance Due</td>
-                        <td className="px-4 py-3 text-right font-mono text-red-700">
-                          PKR {fmt(payablesData.reduce((s, r) => s + r.balance_due, 0))}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
+                  {payablesData.length > 0 && (() => {
+                    const totOrdered = payablesData.reduce((s, r) => s + r.total_ordered, 0);
+                    const totPaid = payablesData.reduce((s, r) => s + r.total_paid, 0);
+                    const totDue = payablesData.reduce((s, r) => s + r.balance_due, 0);
+                    return (
+                      <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold">
+                        <tr>
+                          <td colSpan={2} className="px-4 py-3 text-slate-700">
+                            Total ({payablesData.length} supplier{payablesData.length !== 1 ? 's' : ''})
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(totOrdered)}>
+                            {formatPkrThousands(totOrdered)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-green-700" title={formatPkrFull(totPaid)}>
+                            {formatPkrThousands(totPaid)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-red-700" title={formatPkrFull(totDue)}>
+                            {formatPkrThousands(totDue)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
                 </table>
               </div>
+            </div>
             </div>
           )}
 
           {/* ─── Customer Receivables ─── */}
           {tab === 'receivables' && (
             <div className="space-y-3">
+              <p className="text-xs text-slate-500">Amounts in thousands (K). Hover a figure for the full PKR amount.</p>
               {receivablesData.some(r => r.overdue > 0) && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-                  ⚠️ {receivablesData.filter(r => r.overdue > 0).length} customer(s) have overdue payments totalling PKR {fmt(receivablesData.reduce((s, r) => s + r.overdue, 0))}
+                  ⚠️ {receivablesData.filter(r => r.overdue > 0).length} customer(s) have overdue payments totalling{' '}
+                  <span title={formatPkrFull(receivablesData.reduce((s, r) => s + r.overdue, 0))}>
+                    {formatPkrThousands(receivablesData.reduce((s, r) => s + r.overdue, 0))}
+                  </span>
                 </div>
               )}
               <div className="bg-white rounded-xl border overflow-hidden">
@@ -691,6 +738,7 @@ export default function ReportsPage({
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50"><tr>
                       <th className="px-4 py-3 text-left text-gray-600">Customer</th>
+                      <th className="px-4 py-3 text-left text-gray-600">Project</th>
                       <th className="px-4 py-3 text-left text-gray-600">Unit</th>
                       <th className="px-4 py-3 text-right text-gray-600">Total Due</th>
                       <th className="px-4 py-3 text-right text-gray-600">Paid</th>
@@ -699,20 +747,59 @@ export default function ReportsPage({
                     </tr></thead>
                     <tbody>
                       {receivablesData.length === 0 ? (
-                        <tr><td colSpan={6} className="text-center text-gray-400 py-10">No outstanding receivables.</td></tr>
+                        <tr><td colSpan={7} className="text-center text-gray-400 py-10">No outstanding receivables.</td></tr>
                       ) : receivablesData.map(r => (
                         <tr key={`${r.customer_id}-${r.sale_id}`} className={`border-t hover:bg-gray-50 ${r.overdue > 0 ? 'bg-red-50' : ''}`}>
                           <td className="px-4 py-3 font-medium">{r.customer_name}<br/><span className="text-xs text-gray-400">{r.phone}</span></td>
+                          <td className="px-4 py-3 text-gray-600 text-xs max-w-[160px] truncate" title={r.project_name}>
+                            {r.project_name ?? '—'}
+                          </td>
                           <td className="px-4 py-3 text-gray-600">Unit {r.unit_number}</td>
-                          <td className="px-4 py-3 text-right font-mono">{fmt(r.total_due)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-green-600">{fmt(r.total_paid)}</td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-blue-700">{fmt(r.balance)}</td>
-                          <td className={`px-4 py-3 text-right font-mono font-bold ${r.overdue > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                            {r.overdue > 0 ? fmt(r.overdue) : '-'}
+                          <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(r.total_due)}>
+                            {formatPkrThousands(r.total_due)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-green-600" title={formatPkrFull(r.total_paid)}>
+                            {formatPkrThousands(r.total_paid)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-blue-700" title={formatPkrFull(r.balance)}>
+                            {formatPkrThousands(r.balance)}
+                          </td>
+                          <td
+                            className={`px-4 py-3 text-right font-mono font-bold ${r.overdue > 0 ? 'text-red-600' : 'text-gray-400'}`}
+                            title={r.overdue > 0 ? formatPkrFull(r.overdue) : undefined}
+                          >
+                            {r.overdue > 0 ? formatPkrThousands(r.overdue) : '-'}
                           </td>
                         </tr>
                       ))}
                     </tbody>
+                    {receivablesData.length > 0 && (() => {
+                      const totDue = receivablesData.reduce((s, r) => s + r.total_due, 0);
+                      const totPaid = receivablesData.reduce((s, r) => s + r.total_paid, 0);
+                      const totBal = receivablesData.reduce((s, r) => s + r.balance, 0);
+                      const totOver = receivablesData.reduce((s, r) => s + r.overdue, 0);
+                      return (
+                        <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold">
+                          <tr>
+                            <td colSpan={3} className="px-4 py-3 text-slate-700">
+                              Total ({receivablesData.length} sale{receivablesData.length !== 1 ? 's' : ''})
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(totDue)}>
+                              {formatPkrThousands(totDue)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono text-green-700" title={formatPkrFull(totPaid)}>
+                              {formatPkrThousands(totPaid)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono text-blue-800" title={formatPkrFull(totBal)}>
+                              {formatPkrThousands(totBal)}
+                            </td>
+                            <td className={`px-4 py-3 text-right font-mono ${totOver > 0 ? 'text-red-700' : 'text-gray-400'}`} title={formatPkrFull(totOver)}>
+                              {totOver > 0 ? formatPkrThousands(totOver) : '-'}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      );
+                    })()}
                   </table>
                 </div>
               </div>

@@ -11,6 +11,27 @@ export function formatMoneyDisplay(digits: string): string {
   return n.toLocaleString('en-PK');
 }
 
+/**
+ * Compact PKR in thousands for cards/tables.
+ * e.g. 8_600_000 → "PKR 8,600K"; 850 → "PKR 850"
+ */
+export function formatPkrThousands(amount: number | string | null | undefined): string {
+  const n = Number(amount ?? 0);
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs < 1000) return `${sign}PKR ${Math.round(abs).toLocaleString('en-PK')}`;
+  const thousands = Math.round(abs / 1000);
+  return `${sign}PKR ${thousands.toLocaleString('en-PK')}K`;
+}
+
+/** Full PKR string for tooltips / detail views. */
+export function formatPkrFull(amount: number | string | null | undefined): string {
+  const n = Number(amount ?? 0);
+  if (!Number.isFinite(n)) return '—';
+  return `PKR ${n.toLocaleString('en-PK')}`;
+}
+
 const ONES = [
   '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
   'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',

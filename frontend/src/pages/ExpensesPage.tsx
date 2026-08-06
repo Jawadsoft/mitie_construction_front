@@ -27,6 +27,7 @@ import { useEditLock } from '../hooks/useEditLock';
 
 const EXPENSE_COLUMNS = [
   { id: 'date', label: 'Date' },
+  { id: 'due', label: 'Due Date' },
   { id: 'category', label: 'Category' },
   { id: 'mode', label: 'Mode' },
   { id: 'status', label: 'Status' },
@@ -65,7 +66,9 @@ const emptyForm = {
   project_id: '', project_stage_id: '', category: '', vendor_type: 'OTHER',
   supplier_id: '', contractor_id: '', entry_mode: 'DIRECT' as 'DIRECT' | 'BILL',
   payment_type: 'Cash', bank_account_id: '',
-  expense_date: new Date().toISOString().split('T')[0], amount: '', description: '',
+  expense_date: new Date().toISOString().split('T')[0],
+  due_date: '',
+  amount: '', description: '',
 };
 
 const emptyPayForm = {
@@ -81,6 +84,12 @@ const STATUS_COLORS: Record<string, string> = {
   Unpaid: 'bg-amber-100 text-amber-800',
   Partial: 'bg-blue-100 text-blue-700',
 };
+
+function isOverdue(due: string | null | undefined, status: string) {
+  if (!due || status === 'Paid') return false;
+  const today = new Date().toISOString().split('T')[0];
+  return due < today;
+}
 
 export default function ExpensesPage() {
   const confirm = useConfirm();
@@ -163,6 +172,7 @@ export default function ExpensesPage() {
       entry_mode: (e.entry_mode === 'BILL' ? 'BILL' : 'DIRECT') as 'DIRECT' | 'BILL',
       payment_type: e.payment_type, bank_account_id: e.bank_account_id ?? '',
       expense_date: e.expense_date,
+      due_date: e.due_date ?? '',
       amount: e.amount, description: e.description ?? '',
     };
     setForm(next);
@@ -186,6 +196,7 @@ export default function ExpensesPage() {
       const payload = {
         ...form,
         payment_type: form.entry_mode === 'BILL' ? 'Credit' : form.payment_type,
+        due_date: form.entry_mode === 'BILL' ? (form.due_date || form.expense_date) : null,
         bank_account_id:
           form.entry_mode === 'DIRECT' && needsBank(form.payment_type)
             ? form.bank_account_id || null
@@ -218,6 +229,7 @@ export default function ExpensesPage() {
           payment_type: payload.payment_type,
           bank_account_id: payload.bank_account_id,
           expense_date: form.expense_date,
+          due_date: form.entry_mode === 'BILL' ? (form.due_date || form.expense_date) : null,
           amount: form.amount,
           paid_amount: form.entry_mode === 'BILL' ? '0' : form.amount,
           status: form.entry_mode === 'BILL' ? 'Unpaid' : 'Paid',
@@ -306,7 +318,9 @@ export default function ExpensesPage() {
 
   const handleExportCSV = () => {
     exportCSV('expenses', expenses.map((e) => ({
-      Date: e.expense_date, Category: e.category, Mode: e.entry_mode ?? 'DIRECT',
+      Date: e.expense_date,
+      'Due Date': e.entry_mode === 'BILL' ? (e.due_date ?? '') : '',
+      Category: e.category, Mode: e.entry_mode ?? 'DIRECT',
       Status: e.status ?? 'Paid', Description: e.description ?? '',
       'Payment Method': e.payment_type,
       'Amount (PKR)': e.amount,
@@ -315,9 +329,11 @@ export default function ExpensesPage() {
   };
 
   const handleExportPDF = () => {
-    exportPDF('Expenses Report', ['Date', 'Category', 'Mode', 'Status', 'Payment', 'Amount (PKR)'],
+    exportPDF('Expenses Report', ['Date', 'Due', 'Category', 'Mode', 'Status', 'Payment', 'Amount (PKR)'],
       expenses.map((e) => [
-        e.expense_date, e.category, e.entry_mode ?? 'DIRECT', e.status ?? 'Paid',
+        e.expense_date,
+        e.entry_mode === 'BILL' ? (e.due_date ?? '—') : '—',
+        e.category, e.entry_mode ?? 'DIRECT', e.status ?? 'Paid',
         e.payment_type, Number(e.amount).toLocaleString(),
       ]));
   };
@@ -377,6 +393,7 @@ export default function ExpensesPage() {
               <thead className="bg-gray-50">
                 <tr>
                   {isVisible('date') && <th className="px-4 py-3 text-left text-gray-600">Date</th>}
+                  {isVisible('due') && <th className="px-4 py-3 text-left text-gray-600">Due Date</th>}
                   {isVisible('category') && <th className="px-4 py-3 text-left text-gray-600">Category</th>}
                   {isVisible('mode') && <th className="px-4 py-3 text-left text-gray-600">Mode</th>}
                   {isVisible('status') && <th className="px-4 py-3 text-left text-gray-600">Status</th>}
@@ -391,9 +408,16 @@ export default function ExpensesPage() {
                 ) : expenses.map((e) => {
                   const paid = Number(e.paid_amount ?? (e.entry_mode === 'BILL' ? 0 : e.amount));
                   const canPay = e.entry_mode === 'BILL' && e.status !== 'Paid';
+                  const overdue = e.entry_mode === 'BILL' && isOverdue(e.due_date, e.status);
                   return (
                     <tr key={e.id} className="border-t hover:bg-yellow-50 cursor-pointer" onClick={() => setDrawerExpense(e)}>
                       {isVisible('date') && <td className="px-4 py-3">{e.expense_date}</td>}
+                      {isVisible('due') && (
+                        <td className={`px-4 py-3 ${overdue ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
+                          {e.entry_mode === 'BILL' ? (e.due_date || '—') : '—'}
+                          {overdue && <span className="block text-[10px] uppercase tracking-wide">Overdue</span>}
+                        </td>
+                      )}
                       {isVisible('category') && (
                         <td className="px-4 py-3">
                           <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-full">{e.category}</span>
@@ -491,7 +515,12 @@ export default function ExpensesPage() {
                       type="radio"
                       name="entry_mode"
                       checked={form.entry_mode === 'BILL'}
-                      onChange={() => setForm((f) => ({ ...f, entry_mode: 'BILL', payment_type: 'Credit' }))}
+                      onChange={() => setForm((f) => ({
+                        ...f,
+                        entry_mode: 'BILL',
+                        payment_type: 'Credit',
+                        due_date: f.due_date || f.expense_date,
+                      }))}
                     />
                     Record bill (Accrual)
                   </label>
@@ -562,8 +591,14 @@ export default function ExpensesPage() {
             )}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-                <input type="date" value={form.expense_date} onChange={(e) => setForm((f) => ({ ...f, expense_date: e.target.value }))}
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {form.entry_mode === 'BILL' ? 'Bill date *' : 'Date *'}
+                </label>
+                <input type="date" value={form.expense_date} onChange={(e) => setForm((f) => ({
+                  ...f,
+                  expense_date: e.target.value,
+                  due_date: f.entry_mode === 'BILL' && !f.due_date ? e.target.value : f.due_date,
+                }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
               <div>
@@ -572,6 +607,18 @@ export default function ExpensesPage() {
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
             </div>
+            {form.entry_mode === 'BILL' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Due date *</label>
+                <input
+                  type="date"
+                  value={form.due_date}
+                  onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                />
+                <p className="text-xs text-slate-500 mt-1">When this bill payment is expected.</p>
+              </div>
+            )}
             {form.entry_mode === 'DIRECT' && (
               <>
                 <div>
@@ -633,6 +680,12 @@ export default function ExpensesPage() {
             <p className="text-sm text-gray-600">
               Bill PKR {Number(paying.amount).toLocaleString()} · Paid PKR {Number(paying.paid_amount || 0).toLocaleString()} ·
               Balance <span className="font-semibold text-amber-700">PKR {(Number(paying.amount) - Number(paying.paid_amount || 0)).toLocaleString()}</span>
+              {paying.due_date && (
+                <span className={isOverdue(paying.due_date, paying.status) ? ' text-red-600' : ''}>
+                  {' '}· Due {paying.due_date}
+                  {isOverdue(paying.due_date, paying.status) ? ' (overdue)' : ''}
+                </span>
+              )}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -714,6 +767,16 @@ export default function ExpensesPage() {
           <>
             <DrawerSection title="Expense Details" />
             <DrawerField label="Date" value={drawerExpense.expense_date} />
+            {drawerExpense.entry_mode === 'BILL' && (
+              <DrawerField
+                label="Due Date"
+                value={
+                  drawerExpense.due_date
+                    ? `${drawerExpense.due_date}${isOverdue(drawerExpense.due_date, drawerExpense.status) ? ' (overdue)' : ''}`
+                    : '—'
+                }
+              />
+            )}
             <DrawerField label="Category" value={drawerExpense.category} />
             <DrawerField label="Mode" value={drawerExpense.entry_mode === 'BILL' ? 'Bill (accrual)' : 'Direct'} />
             <DrawerField label="Status" value={drawerExpense.status} />

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   getCustomers, createCustomer, updateCustomer, deleteCustomer,
   getPropertyUnits, createPropertyUnit, updatePropertyUnit, deletePropertyUnit,
-  getSales, getSale, createSale, deleteSale, collectSalePayment, adjustSaleCollection, updateInstallmentCollection
+  getSales, getSale, createSale, updateSale, deleteSale, collectSalePayment, adjustSaleCollection, updateInstallmentCollection
 } from '../api/sales';
 import type { Customer, PropertyUnit, Sale, SaleInstallment } from '../api/sales';
 import { exportCSV, exportExcel } from '../utils/exportUtils';
@@ -28,8 +29,10 @@ const SALES_TABLE_COLUMNS = [
   { id: 'customer', label: 'Customer' },
   { id: 'unit', label: 'Unit' },
   { id: 'date', label: 'Date' },
+  { id: 'due', label: 'Next Due' },
   { id: 'price', label: 'Price' },
   { id: 'paid', label: 'Paid' },
+  { id: 'balance', label: 'Balance' },
   { id: 'status', label: 'Status' },
   { id: 'actions', label: 'Actions' },
 ];
@@ -50,6 +53,14 @@ const emptySaleForm = () => ({
   sale_date: new Date().toISOString().split('T')[0],
   total_sale_price: '',
   notes: '',
+  status: 'Active',
+});
+const emptyInstallRow = () => ({
+  id: '',
+  due_date: '',
+  due_amount: '',
+  paid_amount: '0',
+  locked: false,
 });
 const emptyCustForm = { name: '', phone: '', email: '', cnic: '', address: '' };
 
@@ -83,6 +94,7 @@ export default function SalesPage({
   initialIntent?: NavIntent;
   onIntentConsumed?: () => void;
 } = {}) {
+  const navigate = useNavigate();
   const confirm = useConfirm();
   const { filters, setFilter } = useListFilters('sales', ['tab', 'project']);
   const tab = (['inventory', 'sales', 'customers', 'collections'].includes(filters.tab)
@@ -92,7 +104,7 @@ export default function SalesPage({
   const saleFilterProjectId = filters.project ?? '';
   const setSaleFilterProjectId = (v: string) => setFilter('project', v);
   const { visible: salesCols, isVisible: salesVis, toggle: toggleSalesCol } = useColumnPrefs(
-    'sales.list',
+    'sales.list.v2',
     SALES_COL_IDS,
   );
   const [units, setUnits] = useState<PropertyUnit[]>([]);
@@ -108,6 +120,7 @@ export default function SalesPage({
 
   const [editingUnit, setEditingUnit] = useState<PropertyUnit | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
   // Customer detail drawer
   const [drawerCustomer, setDrawerCustomer] = useState<Customer | null>(null);
@@ -145,8 +158,8 @@ export default function SalesPage({
   const [custBaseline, setCustBaseline] = useState(emptyCustForm);
   const [saleForm, setSaleForm] = useState(emptySaleForm);
   const [saleBaseline, setSaleBaseline] = useState(emptySaleForm());
-  const [installForms, setInstallForms] = useState([{ due_date: '', due_amount: '' }]);
-  const [installBaseline, setInstallBaseline] = useState([{ due_date: '', due_amount: '' }]);
+  const [installForms, setInstallForms] = useState([emptyInstallRow()]);
+  const [installBaseline, setInstallBaseline] = useState([emptyInstallRow()]);
   const [payForm, setPayForm] = useState({
     sale_id: '',
     paid_amount: '',
@@ -199,12 +212,13 @@ export default function SalesPage({
     setTab('sales');
     setSaleFilterProjectId(initialIntent.projectId);
     const nextSale = emptySaleForm();
-    const nextInstall = [{ due_date: '', due_amount: '' }];
+    const nextInstall = [emptyInstallRow()];
     setSaleForm(nextSale);
     setSaleBaseline(nextSale);
     setInstallForms(nextInstall);
     setInstallBaseline(nextInstall);
     setError('');
+    setEditingSale(null);
     setShowModal('sale');
     onIntentConsumed?.();
   }, [initialIntent]);
@@ -317,41 +331,136 @@ export default function SalesPage({
       Number(s.total_sale_price) - Number(s.total_paid) > 0.009,
   );
 
+  const nextDueInstallment = (s: Sale): SaleInstallment | null => {
+    const open = (s.installments ?? [])
+      .filter((i) => Number(i.due_amount) - Number(i.paid_amount) > 0.009 && i.status !== 'Paid')
+      .sort((a, b) => a.due_date.localeCompare(b.due_date));
+    return open[0] ?? null;
+  };
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isInstallmentOverdue = (due: string) => due < todayStr;
+
   const handleExportCollections = () => {
     exportCSV(
       'collections',
-      outstandingSales.map((s) => ({
-        'Sale#': s.id,
-        Customer: s.customer?.name ?? '',
-        Unit: s.property_unit?.unit_number ?? '',
-        Date: s.sale_date,
-        'Sale Price': s.total_sale_price,
-        Collected: s.total_paid,
-        Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toFixed(2),
-        Status: s.status,
-      })),
+      outstandingSales.map((s) => {
+        const next = nextDueInstallment(s);
+        return {
+          'Sale#': s.id,
+          Customer: s.customer?.name ?? '',
+          Unit: s.property_unit?.unit_number ?? '',
+          Date: s.sale_date,
+          'Next Due': next?.due_date ?? '',
+          'Sale Price': s.total_sale_price,
+          Collected: s.total_paid,
+          Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toFixed(2),
+          Status: s.status,
+        };
+      }),
     );
   };
 
   const handleExportSalesCSV = () => {
-    exportCSV('sales', sales.map(s => ({
-      'Sale#': s.id, Date: s.sale_date, 'Total Price': s.total_sale_price,
-      'Paid': s.total_paid, 'Balance': (Number(s.total_sale_price) - Number(s.total_paid)).toString(),
-      Status: s.status,
-    })));
+    exportCSV('sales', sales.map(s => {
+      const next = nextDueInstallment(s);
+      return {
+        'Sale#': s.id,
+        Date: s.sale_date,
+        'Next Due': next?.due_date ?? '',
+        'Total Price': s.total_sale_price,
+        Paid: s.total_paid,
+        Balance: (Number(s.total_sale_price) - Number(s.total_paid)).toString(),
+        Status: s.status,
+      };
+    }));
   };
 
   const handleSaveSale = async () => {
-    if (!saleForm.property_unit_id || !saleForm.customer_id || !saleForm.total_sale_price) {
+    if (!editingSale && (!saleForm.property_unit_id || !saleForm.customer_id || !saleForm.total_sale_price)) {
       setError('Unit, customer, and price are required');
+      throw new Error('validation');
+    }
+    if (editingSale && (!saleForm.customer_id || !saleForm.total_sale_price)) {
+      setError('Customer and price are required');
+      throw new Error('validation');
+    }
+    if (Number(saleForm.total_sale_price) + 0.009 < Number(editingSale?.total_paid ?? 0)) {
+      setError(
+        `Sale price cannot be less than already collected (PKR ${Number(editingSale?.total_paid ?? 0).toLocaleString()})`,
+      );
       throw new Error('validation');
     }
     setError('');
     try {
-      await createSale({ sale: saleForm as any, installments: installForms.filter(i => i.due_date && i.due_amount) as any });
-      setShowModal(''); load();
-      notify.success('Sale created');
-    } catch (e: any) { setError(e.message); throw e; }
+      if (editingSale) {
+        const installments = installForms
+          .filter((i) => i.due_date && i.due_amount)
+          .map((i) => ({
+            ...(i.id ? { id: i.id } : {}),
+            due_date: i.due_date,
+            due_amount: i.due_amount,
+          }));
+        const updated = await updateSale(editingSale.id, {
+          customer_id: saleForm.customer_id,
+          sale_date: saleForm.sale_date,
+          total_sale_price: saleForm.total_sale_price,
+          notes: saleForm.notes || null,
+          status: saleForm.status as Sale['status'],
+          installments,
+        });
+        setShowModal('');
+        setEditingSale(null);
+        setSelectedSale(updated);
+        load();
+        notify.success('Sale updated');
+      } else {
+        await createSale({
+          sale: saleForm as any,
+          installments: installForms.filter((i) => i.due_date && i.due_amount) as any,
+        });
+        setShowModal('');
+        load();
+        notify.success('Sale created');
+      }
+    } catch (e: any) {
+      setError(e.message);
+      throw e;
+    }
+  };
+
+  const openEditSale = async (s: Sale) => {
+    setError('');
+    // Detail view early-returns without the sale modal — return to list first
+    setSelectedSale(null);
+    try {
+      const full = s.installments ? s : await getSale(s.id);
+      setEditingSale(full);
+      const next = {
+        property_unit_id: full.property_unit_id,
+        customer_id: full.customer_id,
+        sale_date: full.sale_date,
+        total_sale_price: String(full.total_sale_price),
+        notes: full.notes ?? '',
+        status: full.status,
+      };
+      const installs =
+        (full.installments ?? []).length > 0
+          ? (full.installments ?? []).map((i) => ({
+              id: i.id,
+              due_date: i.due_date,
+              due_amount: String(i.due_amount),
+              paid_amount: String(i.paid_amount),
+              locked: Number(i.paid_amount) > 0.009,
+            }))
+          : [emptyInstallRow()];
+      setSaleForm(next as any);
+      setSaleBaseline(next as any);
+      setInstallForms(installs as any);
+      setInstallBaseline(installs as any);
+      setShowModal('sale');
+    } catch (e: any) {
+      setError(notifyError(e));
+    }
   };
 
   useRegisterUnsaved({
@@ -370,7 +479,7 @@ export default function SalesPage({
     active: showModal === 'sale',
     isDirty: isFormDirty(saleForm, saleBaseline) || isFormDirty(installForms, installBaseline),
     onSave: handleSaveSale,
-    onDiscard: () => { setShowModal(''); setSaleFilterProjectId(''); },
+    onDiscard: () => { setShowModal(''); setEditingSale(null); setSaleFilterProjectId(''); },
   });
 
   const openCollect = (sale?: Sale) => {
@@ -549,6 +658,15 @@ export default function SalesPage({
           <h1 className="text-xl font-bold text-gray-800">Sale #{selectedSale.id}</h1>
           <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLORS[selectedSale.status]}`}>{selectedSale.status}</span>
           <div className="ml-auto flex gap-2">
+            {selectedSale.status !== 'Cancelled' && (
+              <button
+                type="button"
+                onClick={() => openEditSale(selectedSale)}
+                className="text-xs rounded border border-slate-200 text-slate-700 px-3 py-1.5 hover:bg-slate-50"
+              >
+                Edit Sale
+              </button>
+            )}
             {Number(selectedSale.total_paid) > 0.009 && selectedSale.status !== 'Cancelled' && (
               <button
                 type="button"
@@ -705,6 +823,18 @@ export default function SalesPage({
               {error && <p className="text-red-600 text-sm">{error}</p>}
               <p className="text-sm text-slate-600">
                 Sale S-{selectedSale.id.slice(-6).toUpperCase()} · Balance PKR {saleBalance.toLocaleString()}
+                {(() => {
+                  const next = nextDueInstallment(selectedSale);
+                  if (!next) return null;
+                  const overdue = isInstallmentOverdue(next.due_date);
+                  return (
+                    <span className={overdue ? ' text-red-600' : ''}>
+                      {' '}· Next due {formatDate(next.due_date)}
+                      {overdue ? ' (overdue)' : ''}
+                      {' '}· PKR {(Number(next.due_amount) - Number(next.paid_amount)).toLocaleString()}
+                    </span>
+                  );
+                })()}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -790,6 +920,15 @@ export default function SalesPage({
           <p className="text-sm text-gray-500">Property inventory, sales, and installment collections</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {tab === 'collections' && (
+            <button
+              type="button"
+              onClick={() => navigate('/reports?tab=receivables')}
+              className="border border-blue-600 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-50"
+            >
+              All Receivables →
+            </button>
+          )}
           {(tab === 'sales' || tab === 'collections') && <>
             <button
               type="button"
@@ -867,7 +1006,8 @@ export default function SalesPage({
             <button
               onClick={() => {
                 const nextSale = emptySaleForm();
-                const nextInstall = [{ due_date: '', due_amount: '' }];
+                const nextInstall = [emptyInstallRow()];
+                setEditingSale(null);
                 setSaleForm(nextSale);
                 setSaleBaseline(nextSale);
                 setInstallForms(nextInstall);
@@ -958,8 +1098,10 @@ export default function SalesPage({
                   {salesVis('customer') && <th className="px-4 py-3 text-left text-gray-600">Customer</th>}
                   {salesVis('unit') && <th className="px-4 py-3 text-left text-gray-600">Unit</th>}
                   {salesVis('date') && <th className="px-4 py-3 text-left text-gray-600">Date</th>}
+                  {salesVis('due') && <th className="px-4 py-3 text-left text-gray-600">Next Due</th>}
                   {salesVis('price') && <th className="px-4 py-3 text-right text-gray-600">Price</th>}
                   {salesVis('paid') && <th className="px-4 py-3 text-right text-gray-600">Paid</th>}
+                  {salesVis('balance') && <th className="px-4 py-3 text-right text-gray-600">Balance</th>}
                   {salesVis('status') && <th className="px-4 py-3 text-left text-gray-600">Status</th>}
                   {salesVis('actions') && <th className="px-4 py-3 text-center text-gray-600">Actions</th>}
                 </tr>
@@ -967,22 +1109,51 @@ export default function SalesPage({
               <tbody>
                 {sales.length === 0 ? (
                   <tr><td colSpan={salesCols.length} className="text-center text-gray-400 py-8">No sales yet.</td></tr>
-                ) : sales.map(s => (
+                ) : sales.map(s => {
+                  const next = nextDueInstallment(s);
+                  const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                  const overdue = next ? isInstallmentOverdue(next.due_date) : false;
+                  return (
                   <tr key={s.id} className="border-t hover:bg-blue-50 cursor-pointer" onClick={() => viewSale(s.id)}>
                     {salesVis('id') && <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>}
                     {salesVis('customer') && <td className="px-4 py-3">{s.customer?.name ?? '-'}</td>}
                     {salesVis('unit') && <td className="px-4 py-3">{s.property_unit?.unit_number ?? '-'}</td>}
                     {salesVis('date') && <td className="px-4 py-3">{formatDate(s.sale_date)}</td>}
+                    {salesVis('due') && (
+                      <td className={`px-4 py-3 ${overdue ? 'text-red-600 font-medium' : balance > 0.009 ? 'text-gray-700' : 'text-slate-400'}`}>
+                        {next ? formatDate(next.due_date) : balance > 0.009 ? '—' : 'Paid up'}
+                        {overdue && <span className="block text-[10px] uppercase tracking-wide">Overdue</span>}
+                      </td>
+                    )}
                     {salesVis('price') && <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>}
                     {salesVis('paid') && <td className="px-4 py-3 text-right font-mono text-green-600">{Number(s.total_paid).toLocaleString()}</td>}
+                    {salesVis('balance') && (
+                      <td className={`px-4 py-3 text-right font-mono font-medium ${
+                        balance > 0.009 ? 'text-red-600' : balance < -0.009 ? 'text-amber-700' : 'text-slate-400'
+                      }`}>
+                        {balance.toLocaleString()}
+                      </td>
+                    )}
                     {salesVis('status') && <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[s.status]}`}>{s.status}</span></td>}
                     {salesVis('actions') && (
                       <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => handleDeleteSale(s.id)} className="text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">Del</button>
+                        <div className="inline-flex gap-1 justify-center">
+                          {s.status !== 'Cancelled' && (
+                            <button
+                              type="button"
+                              onClick={() => openEditSale(s)}
+                              className="text-blue-600 text-xs px-2 py-1 rounded hover:bg-blue-50"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <button onClick={() => handleDeleteSale(s.id)} className="text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">Del</button>
+                        </div>
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -994,7 +1165,7 @@ export default function SalesPage({
             <div className="px-4 py-3 border-b bg-slate-50">
               <p className="text-sm font-medium text-slate-800">Due for collection</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Sales with no payment received yet — use Collect for the first receipt.
+                Sales with no payment received yet — use Collect for the first receipt. Next due shows the earliest unpaid installment date.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -1005,6 +1176,7 @@ export default function SalesPage({
                     <th className="px-4 py-3 text-left text-gray-600">Customer</th>
                     <th className="px-4 py-3 text-left text-gray-600">Unit</th>
                     <th className="px-4 py-3 text-left text-gray-600">Sale Date</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Next Due</th>
                     <th className="px-4 py-3 text-right text-gray-600">Sale Price</th>
                     <th className="px-4 py-3 text-right text-gray-600">Balance Due</th>
                     <th className="px-4 py-3 text-center text-gray-600">Action</th>
@@ -1013,19 +1185,25 @@ export default function SalesPage({
                 <tbody>
                   {dueForFirstCollection.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center text-gray-400 py-8">
+                      <td colSpan={8} className="text-center text-gray-400 py-8">
                         No unpaid sales waiting for first collection.
                       </td>
                     </tr>
                   ) : (
                     dueForFirstCollection.map((s) => {
                       const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                      const next = nextDueInstallment(s);
+                      const overdue = next ? isInstallmentOverdue(next.due_date) : false;
                       return (
                         <tr key={s.id} className="border-t hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium text-blue-600">S-{s.id.slice(-6).toUpperCase()}</td>
                           <td className="px-4 py-3">{s.customer?.name ?? '—'}</td>
                           <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
                           <td className="px-4 py-3">{formatDate(s.sale_date)}</td>
+                          <td className={`px-4 py-3 ${overdue ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
+                            {next ? formatDate(next.due_date) : '—'}
+                            {overdue && <span className="block text-[10px] uppercase tracking-wide">Overdue</span>}
+                          </td>
                           <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-mono text-red-600 font-medium">{balance.toLocaleString()}</td>
                           <td className="px-4 py-3 text-center">
@@ -1060,6 +1238,7 @@ export default function SalesPage({
                     <th className="px-4 py-3 text-left text-gray-600">Sale</th>
                     <th className="px-4 py-3 text-left text-gray-600">Customer</th>
                     <th className="px-4 py-3 text-left text-gray-600">Unit</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Next Due</th>
                     <th className="px-4 py-3 text-right text-gray-600">Sale Price</th>
                     <th className="px-4 py-3 text-right text-gray-600">Collected</th>
                     <th className="px-4 py-3 text-right text-gray-600">Balance</th>
@@ -1069,13 +1248,15 @@ export default function SalesPage({
                 <tbody>
                   {collectedSales.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center text-gray-400 py-8">
+                      <td colSpan={8} className="text-center text-gray-400 py-8">
                         No collections recorded yet.
                       </td>
                     </tr>
                   ) : (
                     collectedSales.map((s) => {
                       const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                      const next = nextDueInstallment(s);
+                      const overdue = next ? isInstallmentOverdue(next.due_date) : false;
                       return (
                         <tr key={s.id} className="border-t hover:bg-gray-50">
                           <td className="px-4 py-3">
@@ -1089,6 +1270,10 @@ export default function SalesPage({
                           </td>
                           <td className="px-4 py-3">{s.customer?.name ?? '—'}</td>
                           <td className="px-4 py-3">{s.property_unit?.unit_number ?? '—'}</td>
+                          <td className={`px-4 py-3 ${overdue ? 'text-red-600 font-medium' : balance > 0.009 ? 'text-gray-700' : 'text-slate-400'}`}>
+                            {next ? formatDate(next.due_date) : balance > 0.009 ? '—' : 'Paid up'}
+                            {overdue && <span className="block text-[10px] uppercase tracking-wide">Overdue</span>}
+                          </td>
                           <td className="px-4 py-3 text-right font-mono">{Number(s.total_sale_price).toLocaleString()}</td>
                           <td className="px-4 py-3 text-right">
                             <button
@@ -1376,16 +1561,16 @@ export default function SalesPage({
 
       {showModal === 'sale' && (
         <Modal
-          title="New Sale"
+          title={editingSale ? `Edit Sale S-${editingSale.id.slice(-6).toUpperCase()}` : 'New Sale'}
           mode="form"
           isDirty={
             isFormDirty(saleForm, saleBaseline) || isFormDirty(installForms, installBaseline)
           }
-          onClose={() => { setShowModal(''); setSaleFilterProjectId(''); }}
+          onClose={() => { setShowModal(''); setEditingSale(null); setSaleFilterProjectId(''); }}
           footer={
             <ModalFormFooter
               onSave={() => void handleSaveSale()}
-              saveLabel="Create Sale"
+              saveLabel={editingSale ? 'Save Changes' : 'Create Sale'}
               error={error ? <p className="text-red-600 text-sm">{error}</p> : null}
             />
           }
@@ -1393,25 +1578,40 @@ export default function SalesPage({
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Property Unit *</label>
-              <select value={saleForm.property_unit_id} onChange={e => setSaleForm(f => ({ ...f, property_unit_id: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                <option value="">-- Select Available Unit --</option>
-                {units
-                  .filter((u) => u.status === 'Available')
-                  .filter((u) => !saleFilterProjectId || u.project_id === saleFilterProjectId)
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>
-                      Unit {u.unit_number} – PKR {Number(u.list_price).toLocaleString()}
-                    </option>
-                  ))}
-              </select>
-              {saleFilterProjectId && (
+              {editingSale ? (
+                <input
+                  disabled
+                  value={`Unit ${editingSale.property_unit?.unit_number ?? editingSale.property_unit_id}${
+                    editingSale.property_unit?.list_price
+                      ? ` – PKR ${Number(editingSale.property_unit.list_price).toLocaleString()}`
+                      : ''
+                  }`}
+                  className="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700"
+                />
+              ) : (
+                <select value={saleForm.property_unit_id} onChange={e => setSaleForm(f => ({ ...f, property_unit_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                  <option value="">-- Select Available Unit --</option>
+                  {units
+                    .filter((u) => u.status === 'Available')
+                    .filter((u) => !saleFilterProjectId || u.project_id === saleFilterProjectId)
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        Unit {u.unit_number} – PKR {Number(u.list_price).toLocaleString()}
+                      </option>
+                    ))}
+                </select>
+              )}
+              {!editingSale && saleFilterProjectId && (
                 <p className="text-xs text-slate-500 mt-1">
                   Filtered to project units
                   {projects.find((p) => p.id === saleFilterProjectId)
                     ? `: ${projects.find((p) => p.id === saleFilterProjectId)!.name}`
                     : ''}
                 </p>
+              )}
+              {editingSale && (
+                <p className="text-xs text-slate-500 mt-1">Unit cannot be changed after the sale is created.</p>
               )}
             </div>
             <div>
@@ -1432,20 +1632,82 @@ export default function SalesPage({
                 <label className="block text-sm font-medium text-gray-700 mb-1">Sale Price *</label>
                 <input type="number" value={saleForm.total_sale_price} onChange={e => setSaleForm(f => ({ ...f, total_sale_price: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                {editingSale && Number(editingSale.total_paid) > 0.009 && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Already collected: PKR {Number(editingSale.total_paid).toLocaleString()}
+                  </p>
+                )}
               </div>
+            </div>
+            {editingSale && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select
+                  value={saleForm.status}
+                  onChange={(e) => setSaleForm((f) => ({ ...f, status: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea
+                value={saleForm.notes}
+                onChange={(e) => setSaleForm((f) => ({ ...f, notes: e.target.value }))}
+                rows={2}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                placeholder="Optional"
+              />
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-gray-700">Installments (optional)</label>
-                <button onClick={() => setInstallForms(prev => [...prev, { due_date: '', due_amount: '' }])} className="text-blue-600 text-xs hover:underline">+ Add</button>
+                <label className="text-sm font-medium text-gray-700">
+                  {editingSale ? 'Installment schedule' : 'Installments (optional)'}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setInstallForms((prev) => [...prev, emptyInstallRow()])}
+                  className="text-blue-600 text-xs hover:underline"
+                >
+                  + Add
+                </button>
               </div>
               <div className="space-y-2">
                 {installForms.map((inst, idx) => (
-                  <div key={idx} className="grid grid-cols-2 gap-2">
-                    <input type="date" placeholder="Due Date" value={inst.due_date} onChange={e => setInstallForms(prev => { const n = [...prev]; n[idx].due_date = e.target.value; return n; })}
-                      className="border rounded px-2 py-1 text-xs" />
-                    <input type="number" placeholder="Amount" value={inst.due_amount} onChange={e => setInstallForms(prev => { const n = [...prev]; n[idx].due_amount = e.target.value; return n; })}
-                      className="border rounded px-2 py-1 text-xs" />
+                  <div key={inst.id || idx} className="grid grid-cols-2 gap-2">
+                    <input
+                      type="date"
+                      placeholder="Due Date"
+                      value={inst.due_date}
+                      onChange={(e) => setInstallForms((prev) => {
+                        const n = [...prev];
+                        n[idx] = { ...n[idx], due_date: e.target.value };
+                        return n;
+                      })}
+                      className="border rounded px-2 py-1 text-xs"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Amount"
+                      value={inst.due_amount}
+                      disabled={!!inst.locked}
+                      title={inst.locked ? 'Amount locked — payment already recorded' : undefined}
+                      onChange={(e) => setInstallForms((prev) => {
+                        const n = [...prev];
+                        n[idx] = { ...n[idx], due_amount: e.target.value };
+                        return n;
+                      })}
+                      className={`border rounded px-2 py-1 text-xs ${inst.locked ? 'bg-gray-50 text-gray-500' : ''}`}
+                    />
+                    {inst.locked && (
+                      <p className="col-span-2 text-[10px] text-slate-500">
+                        Paid PKR {Number(inst.paid_amount || 0).toLocaleString()} — due date can still be adjusted
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1479,10 +1741,12 @@ export default function SalesPage({
                 <option value="">-- Select sale --</option>
                 {outstandingSales.map((s) => {
                   const balance = Number(s.total_sale_price) - Number(s.total_paid);
+                  const next = nextDueInstallment(s);
                   return (
                     <option key={s.id} value={s.id}>
                       S-{s.id.slice(-6).toUpperCase()} · {s.customer?.name ?? 'Customer'} · Unit{' '}
                       {s.property_unit?.unit_number ?? '—'} · Due PKR {balance.toLocaleString()}
+                      {next ? ` · Next ${formatDate(next.due_date)}` : ''}
                     </option>
                   );
                 })}

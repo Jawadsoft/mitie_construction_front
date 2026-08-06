@@ -12,6 +12,7 @@ export interface Expense {
   payment_type: string;
   bank_account_id: string | null;
   expense_date: string;
+  due_date?: string | null;
   amount: string;
   paid_amount: string;
   status: string;

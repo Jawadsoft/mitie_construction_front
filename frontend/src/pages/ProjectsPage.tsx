@@ -28,7 +28,7 @@ import { useConfirm, useRegisterUnsaved } from '../components/ConfirmDialog';
 import { notify, notifyError } from '../utils/toast';
 import { PAKISTAN_MARLA_SQFT } from '../utils/plotSize';
 import { getMeasurementSettings } from '../api/settings';
-import { parseMoneyInput } from '../utils/money';
+import { parseMoneyInput, formatPkrThousands, formatPkrFull } from '../utils/money';
 import type { NavQuickAction } from '../types/navIntent';
 import { useListFilters } from '../utils/navState';
 import { useColumnPrefs } from '../utils/columnPrefs';
@@ -706,15 +706,15 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                       <td className="px-4 py-3 text-slate-600">{p.manager_name || '—'}</td>
                     )}
                     {isVisible('budget') && (
-                      <td className="px-4 py-3 text-right font-mono">
+                      <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(p.total_estimated_budget)}>
                         {p.total_estimated_budget
-                          ? Number(p.total_estimated_budget).toLocaleString()
+                          ? formatPkrThousands(p.total_estimated_budget)
                           : '—'}
                       </td>
                     )}
                     {isVisible('actual') && (
-                      <td className="px-4 py-3 text-right font-mono text-red-700">
-                        {Number(p.computed?.total_paid ?? 0).toLocaleString()}
+                      <td className="px-4 py-3 text-right font-mono text-red-700" title={formatPkrFull(p.computed?.total_paid)}>
+                        {formatPkrThousands(p.computed?.total_paid ?? 0)}
                       </td>
                     )}
                     {isVisible('completion') && (
@@ -790,102 +790,156 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                   )}
                 </div>
 
-                {/* Stats — Plan → Cost → Revenue (aligned 2-column) */}
-                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                  <div>
-                    <p className="text-xs text-slate-400">Budget</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'budget' })}
-                    >
-                      {p.total_estimated_budget
-                        ? `PKR ${Number(p.total_estimated_budget).toLocaleString()}`
-                        : '—'}
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Target Sale</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'target_sale' })}
-                    >
-                      {p.target_sale_price
-                        ? `PKR ${Number(p.target_sale_price).toLocaleString()}`
-                        : '—'}
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Accrued Cost</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-slate-600 hover:text-blue-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'accrued' })}
-                    >
-                      PKR {Number(p.computed?.total_spent ?? 0).toLocaleString()}
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Actual Paid</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-red-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'paid' })}
-                    >
-                      PKR {Number(p.computed?.total_paid ?? 0).toLocaleString()}
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Sales</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-green-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'sales' })}
-                    >
-                      PKR {soldValue.toLocaleString()}
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Actual Collected</p>
-                    <button
-                      type="button"
-                      className="font-semibold text-green-600 hover:underline text-left"
-                      onClick={() => setFigureDetail({ project: p, kind: 'collected' })}
-                    >
-                      PKR {Number(p.computed?.total_collected ?? 0).toLocaleString()}
-                    </button>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-xs text-slate-400">
-                      {soldValue > 0 ? 'Profit' : 'Expected Profit'}
-                    </p>
-                    {(() => {
-                      const accrued = Number(p.computed?.total_spent ?? 0);
-                      const target = Number(p.target_sale_price ?? 0);
-                      const profit =
-                        soldValue > 0
-                          ? soldValue - accrued
-                          : target > 0
-                            ? target - accrued
-                            : null;
-                      if (profit == null) {
-                        return <p className="font-semibold text-slate-400">—</p>;
-                      }
-                      return (
+                {/* Stats — Plan → Cost+Payable → Sales+Receivable → Profit */}
+                {(() => {
+                  const accrued = Number(p.computed?.total_spent ?? 0);
+                  const paid = Number(p.computed?.total_paid ?? 0);
+                  const collected = Number(p.computed?.total_collected ?? 0);
+                  const target = Number(p.target_sale_price ?? 0);
+                  const payableBalance = accrued - paid;
+                  const actualBalance = soldValue - collected; // receivable
+                  const profit =
+                    soldValue > 0
+                      ? soldValue - accrued
+                      : target > 0
+                        ? target - accrued
+                        : null;
+                  return (
+                    <div className="grid grid-cols-3 gap-x-4 gap-y-3 text-sm">
+                      {/* Row 1 — Plan */}
+                      <div>
+                        <p className="text-xs text-slate-400">Budget</p>
                         <button
                           type="button"
-                          className={`font-semibold hover:underline text-left ${
-                            profit >= 0 ? 'text-green-600' : 'text-red-600'
-                          }`}
-                          onClick={() => setFigureDetail({ project: p, kind: 'profit' })}
+                          title={formatPkrFull(p.total_estimated_budget)}
+                          className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'budget' })}
                         >
-                          PKR {profit.toLocaleString()}
+                          {p.total_estimated_budget
+                            ? formatPkrThousands(p.total_estimated_budget)
+                            : '—'}
                         </button>
-                      );
-                    })()}
-                  </div>
-                </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400">Target Sale</p>
+                        <button
+                          type="button"
+                          title={formatPkrFull(p.target_sale_price)}
+                          className="font-semibold text-slate-900 hover:text-blue-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'target_sale' })}
+                        >
+                          {p.target_sale_price
+                            ? formatPkrThousands(p.target_sale_price)
+                            : '—'}
+                        </button>
+                      </div>
+                      <div />
+
+                      {/* Row 2 — Cost / payable */}
+                      <div>
+                        <p className="text-xs text-slate-400">Accrued Cost</p>
+                        <button
+                          type="button"
+                          title={formatPkrFull(accrued)}
+                          className="font-semibold text-slate-600 hover:text-blue-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'accrued' })}
+                        >
+                          {formatPkrThousands(accrued)}
+                        </button>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400">Actual Paid</p>
+                        <button
+                          type="button"
+                          title={formatPkrFull(paid)}
+                          className="font-semibold text-red-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'paid' })}
+                        >
+                          {formatPkrThousands(paid)}
+                        </button>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400">Payable Balance</p>
+                        <button
+                          type="button"
+                          title={`${formatPkrFull(payableBalance)} · Accrued Cost − Actual Paid`}
+                          className={`font-semibold hover:underline text-left ${
+                            payableBalance > 0.009
+                              ? 'text-red-600'
+                              : payableBalance < -0.009
+                                ? 'text-green-600'
+                                : 'text-slate-600'
+                          }`}
+                          onClick={() => setFigureDetail({ project: p, kind: 'payable_balance' })}
+                        >
+                          {formatPkrThousands(payableBalance)}
+                        </button>
+                      </div>
+
+                      {/* Row 3 — Sales / receivable */}
+                      <div>
+                        <p className="text-xs text-slate-400">Sales</p>
+                        <button
+                          type="button"
+                          title={formatPkrFull(soldValue)}
+                          className="font-semibold text-green-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'sales' })}
+                        >
+                          {formatPkrThousands(soldValue)}
+                        </button>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400">Actual Collected</p>
+                        <button
+                          type="button"
+                          title={formatPkrFull(collected)}
+                          className="font-semibold text-green-600 hover:underline text-left"
+                          onClick={() => setFigureDetail({ project: p, kind: 'collected' })}
+                        >
+                          {formatPkrThousands(collected)}
+                        </button>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400">Actual Balance</p>
+                        <button
+                          type="button"
+                          title={`${formatPkrFull(actualBalance)} · Sales − Actual Collected`}
+                          className={`font-semibold hover:underline text-left ${
+                            actualBalance > 0.009
+                              ? 'text-amber-700'
+                              : actualBalance < -0.009
+                                ? 'text-red-600'
+                                : 'text-slate-600'
+                          }`}
+                          onClick={() => setFigureDetail({ project: p, kind: 'balance' })}
+                        >
+                          {formatPkrThousands(actualBalance)}
+                        </button>
+                      </div>
+
+                      {/* Row 4 — Profit */}
+                      <div className="col-span-3">
+                        <p className="text-xs text-slate-400">
+                          {soldValue > 0 ? 'Profit' : 'Expected Profit'}
+                        </p>
+                        {profit == null ? (
+                          <p className="font-semibold text-slate-400">—</p>
+                        ) : (
+                          <button
+                            type="button"
+                            title={formatPkrFull(profit)}
+                            className={`font-semibold hover:underline text-left ${
+                              profit >= 0 ? 'text-green-600' : 'text-red-600'
+                            }`}
+                            onClick={() => setFigureDetail({ project: p, kind: 'profit' })}
+                          >
+                            {formatPkrThousands(profit)}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Progress box */}
                 <div className="bg-slate-50 rounded-lg px-4 py-3 space-y-2">

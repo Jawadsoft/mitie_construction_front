@@ -18,7 +18,9 @@ export type FigureKind =
   | 'paid'
   | 'sales'
   | 'collected'
-  | 'profit';
+  | 'profit'
+  | 'balance'
+  | 'payable_balance';
 
 const TITLES: Record<FigureKind, string> = {
   budget: 'Budget',
@@ -28,6 +30,8 @@ const TITLES: Record<FigureKind, string> = {
   sales: 'Sales',
   collected: 'Actual Collected',
   profit: 'Profit',
+  balance: 'Actual Balance',
+  payable_balance: 'Payable Balance',
 };
 
 interface Props {
@@ -64,7 +68,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
       setLoading(true);
       setError('');
       try {
-        if (kind === 'accrued' || kind === 'paid' || kind === 'profit') {
+        if (kind === 'accrued' || kind === 'paid' || kind === 'profit' || kind === 'balance' || kind === 'payable_balance') {
           const [ex, lp, mi] = await Promise.all([
             getExpenses({ project_id: project.id }),
             getPayments(project.id),
@@ -75,12 +79,12 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
           setLabour(lp);
           setIssues(mi);
         }
-        if (kind === 'sales' || kind === 'collected' || kind === 'profit') {
+        if (kind === 'sales' || kind === 'collected' || kind === 'profit' || kind === 'balance') {
           const list = await getSales(project.id);
           if (cancelled) return;
           setSales(list.filter((s) => s.status !== 'Cancelled'));
         }
-        if (kind === 'collected') {
+        if (kind === 'collected' || kind === 'balance') {
           const list = await getSales(project.id);
           const active = list.filter((s) => s.status !== 'Cancelled');
           const full = await Promise.all(active.map((s) => getSale(s.id)));
@@ -442,6 +446,127 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                     </p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {kind === 'balance' && (
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Sales</p>
+                    <p className="font-semibold text-green-700">{money(soldTotal)}</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Actual Collected</p>
+                    <p className="font-semibold text-green-700">
+                      {money(Number(project.computed?.total_collected ?? 0))}
+                    </p>
+                  </div>
+                  <div className="col-span-2 bg-amber-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Actual Balance (receivable)</p>
+                    <p className="font-semibold text-lg text-amber-800">
+                      {money(soldTotal - Number(project.computed?.total_collected ?? 0))}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">Sales − Actual Collected</p>
+                  </div>
+                </div>
+                {sales.length > 0 && (
+                  <div className="border rounded-lg overflow-x-auto">
+                    <table className="w-full text-sm min-w-[480px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-gray-600">Sale</th>
+                          <th className="px-3 py-2 text-left text-gray-600">Customer</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Price</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Collected</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sales.map((s) => {
+                          const bal = Number(s.total_sale_price) - Number(s.total_paid);
+                          return (
+                            <tr key={s.id} className="border-t">
+                              <td className="px-3 py-2 text-blue-600">
+                                S-{s.id.slice(-6).toUpperCase()}
+                              </td>
+                              <td className="px-3 py-2">{s.customer?.name ?? '—'}</td>
+                              <td className="px-3 py-2 text-right font-mono">
+                                {Number(s.total_sale_price).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-green-600">
+                                {Number(s.total_paid).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-amber-700 font-semibold">
+                                {bal.toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {kind === 'payable_balance' && (
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Accrued Cost</p>
+                    <p className="font-semibold">{money(accruedTotal)}</p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Actual Paid</p>
+                    <p className="font-semibold text-red-600">
+                      {money(Number(project.computed?.total_paid ?? 0))}
+                    </p>
+                  </div>
+                  <div className="col-span-2 bg-red-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Payable Balance (unpaid)</p>
+                    <p className="font-semibold text-lg text-red-700">
+                      {money(accruedTotal - Number(project.computed?.total_paid ?? 0))}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Accrued Cost − Actual Paid (includes unpaid bills)
+                    </p>
+                  </div>
+                </div>
+                {expenses.filter((e) => Number(e.amount) - Number(e.paid_amount) > 0.009).length > 0 && (
+                  <div className="border rounded-lg overflow-x-auto">
+                    <table className="w-full text-sm min-w-[480px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-gray-600">Date</th>
+                          <th className="px-3 py-2 text-left text-gray-600">Mode</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Amount</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Paid</th>
+                          <th className="px-3 py-2 text-right text-gray-600">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {expenses
+                          .filter((e) => Number(e.amount) - Number(e.paid_amount) > 0.009)
+                          .map((e) => (
+                            <tr key={e.id} className="border-t">
+                              <td className="px-3 py-2">{formatDate(e.expense_date)}</td>
+                              <td className="px-3 py-2 text-xs">{e.entry_mode}</td>
+                              <td className="px-3 py-2 text-right font-mono">
+                                {Number(e.amount).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-green-600">
+                                {Number(e.paid_amount).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-red-600 font-semibold">
+                                {(Number(e.amount) - Number(e.paid_amount)).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </>

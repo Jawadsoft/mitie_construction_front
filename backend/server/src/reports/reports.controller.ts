@@ -31,13 +31,13 @@ export class ReportsController {
   }
 
   @Get('supplier-payables')
-  getSupplierPayables() {
-    return this.svc.getSupplierPayables();
+  getSupplierPayables(@Query('project_id') project_id?: string) {
+    return this.svc.getSupplierPayables(project_id);
   }
 
   @Get('receivables')
-  getReceivables() {
-    return this.svc.getReceivablesAging();
+  getReceivables(@Query('project_id') project_id?: string) {
+    return this.svc.getReceivablesAging(project_id);
   }
 
   @Get('labour-cost')

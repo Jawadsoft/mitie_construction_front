@@ -76,6 +76,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     payment_type: 'Cash',
     bank_account_id: '',
     expense_date: today(),
+    due_date: today(),
     amount: '',
     description: '',
   });
@@ -214,6 +215,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
             ? expenseForm.bank_account_id
             : null,
         expense_date: expenseForm.expense_date,
+        due_date: expenseForm.entry_mode === 'BILL' ? (expenseForm.due_date || expenseForm.expense_date) : null,
         amount: expenseForm.amount,
         description: expenseForm.description || null,
       });
@@ -439,7 +441,12 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
                   <input
                     type="radio"
                     checked={expenseForm.entry_mode === 'BILL'}
-                    onChange={() => setExpenseForm((f) => ({ ...f, entry_mode: 'BILL', payment_type: 'Credit' }))}
+                    onChange={() => setExpenseForm((f) => ({
+                      ...f,
+                      entry_mode: 'BILL',
+                      payment_type: 'Credit',
+                      due_date: f.due_date || f.expense_date,
+                    }))}
                   />
                   Record bill
                 </label>
@@ -495,11 +502,17 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
             )}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {expenseForm.entry_mode === 'BILL' ? 'Bill date *' : 'Date *'}
+                </label>
                 <input
                   type="date"
                   value={expenseForm.expense_date}
-                  onChange={(e) => setExpenseForm((f) => ({ ...f, expense_date: e.target.value }))}
+                  onChange={(e) => setExpenseForm((f) => ({
+                    ...f,
+                    expense_date: e.target.value,
+                    due_date: f.entry_mode === 'BILL' && !f.due_date ? e.target.value : f.due_date,
+                  }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm"
                 />
               </div>
@@ -514,6 +527,18 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
                 />
               </div>
             </div>
+            {expenseForm.entry_mode === 'BILL' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Due date *</label>
+                <input
+                  type="date"
+                  value={expenseForm.due_date}
+                  onChange={(e) => setExpenseForm((f) => ({ ...f, due_date: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">When this bill payment is expected.</p>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
               <input

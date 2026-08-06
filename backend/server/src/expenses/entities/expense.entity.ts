@@ -37,6 +37,10 @@ export class Expense {
   @Column({ type: 'date' })
   expense_date: string;
 
+  /** When the BILL is due for payment (null for DIRECT / already-paid). */
+  @Column({ type: 'date', nullable: true })
+  due_date: string | null;
+
   @Column({ type: 'decimal', precision: 18, scale: 2 })
   amount: string;
 
