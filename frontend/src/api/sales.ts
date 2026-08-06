@@ -146,7 +146,7 @@ export async function deletePropertyUnit(id: string): Promise<void> {
 
 export async function updateSale(
   id: string,
-  dto: Partial<Sale> & {
+  dto: Omit<Partial<Sale>, 'installments'> & {
     installments?: Array<Partial<SaleInstallment> & { id?: string }>;
   },
 ): Promise<Sale> {
