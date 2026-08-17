@@ -8,7 +8,7 @@ import {
 import { exportCSV, exportPDF } from '../utils/exportUtils';
 import type {
   BudgetVsActual, StageBudget, ProjectProfitability, ProfitLoss,
-  SupplierPayable, ReceivableRow, LabourCost, CashflowRow, ExpenseBreakdown,
+  SupplierPayable, ReceivableRow, LabourCost, CashflowReport, ExpenseBreakdown,
   PartnersEquityReport,
 } from '../api/reports';
 import { getProjects } from '../api/projects';
@@ -58,6 +58,9 @@ export default function ReportsPage({
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [includeUnsoldCosts, setIncludeUnsoldCosts] = useState(
+    searchParams.get('include_unsold') !== 'false',
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -65,7 +68,7 @@ export default function ReportsPage({
   const [budgetData, setBudgetData] = useState<BudgetVsActual[]>([]);
   const [stageData, setStageData] = useState<StageBudget[]>([]);
   const [plData, setPlData] = useState<ProfitLoss | null>(null);
-  const [cashflowData, setCashflowData] = useState<CashflowRow[]>([]);
+  const [cashflowData, setCashflowData] = useState<CashflowReport | null>(null);
   const [payablesData, setPayablesData] = useState<SupplierPayable[]>([]);
   const [receivablesData, setReceivablesData] = useState<ReceivableRow[]>([]);
   const [labourData, setLabourData] = useState<LabourCost | null>(null);
@@ -85,11 +88,12 @@ export default function ReportsPage({
     const next = new URLSearchParams();
     if (tab !== 'profitability') next.set('tab', tab);
     if (selectedProject) next.set('project', selectedProject);
+    if (tab === 'pl' && !includeUnsoldCosts) next.set('include_unsold', 'false');
     const want = next.toString();
     const curr = searchParams.toString();
     if (want !== curr) setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync URL from tab/project only
-  }, [tab, selectedProject]);
+  }, [tab, selectedProject, includeUnsoldCosts]);
 
   const loadReport = async () => {
     setLoading(true); setError('');
@@ -101,9 +105,23 @@ export default function ReportsPage({
           if (selectedProject) setStageData(await getStageBudget(selectedProject));
           else setStageData([]);
           break;
-        case 'pl': setPlData(await getProfitLoss(dateFrom || undefined, dateTo || undefined)); break;
+        case 'pl':
+          setPlData(await getProfitLoss(
+            dateFrom || undefined,
+            dateTo || undefined,
+            selectedProject || undefined,
+            includeUnsoldCosts,
+          ));
+          break;
         case 'partners-equity': setPartnersEquity(await getPartnersEquity(dateTo || undefined)); break;
-        case 'cashflow': setCashflowData(await getCashflowReport(period, dateFrom || undefined, dateTo || undefined)); break;
+        case 'cashflow':
+          setCashflowData(await getCashflowReport(
+            period,
+            dateFrom || undefined,
+            dateTo || undefined,
+            selectedProject || undefined,
+          ));
+          break;
         case 'payables': setPayablesData(await getSupplierPayables(selectedProject || undefined)); break;
         case 'receivables': setReceivablesData(await getReceivables(selectedProject || undefined)); break;
         case 'labour': setLabourData(await getLabourCost(selectedProject || undefined)); break;
@@ -113,7 +131,9 @@ export default function ReportsPage({
     finally { setLoading(false); }
   };
 
-  useEffect(() => { loadReport(); }, [tab, selectedProject, period, dateFrom, dateTo]);
+  useEffect(() => {
+    loadReport();
+  }, [tab, selectedProject, period, dateFrom, dateTo, includeUnsoldCosts]);
 
   const TABS: { id: ReportTab; label: string }[] = [
     { id: 'profitability', label: '📈 Profitability' },
@@ -171,7 +191,22 @@ export default function ReportsPage({
               );
             }
             else if (tab === 'receivables' && receivablesData.length) exportCSV(`report-receivables`, receivablesData as any);
-            else if (tab === 'payables' && payablesData.length) exportCSV(`report-payables`, payablesData as any);
+            else if (tab === 'payables' && payablesData.length) {
+              exportCSV(
+                `report-payables`,
+                payablesData.map((r) => ({
+                  Project: r.project_name,
+                  Party: r.party_name || r.supplier_name,
+                  Type: r.vendor_type,
+                  Category: r.category,
+                  DueDate: r.due_date || r.expense_date || '',
+                  Status: r.status,
+                  Amount: r.amount ?? r.total_ordered,
+                  Paid: r.paid_amount ?? r.total_paid,
+                  BalanceDue: r.balance_due,
+                })) as any,
+              );
+            }
           }} className="border border-green-600 text-green-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-50">↓ CSV</button>
           <button onClick={() => {
             if (tab === 'profitability') exportPDF('Profitability Report', ['Project','Revenue','Cost','Profit','Margin%'], profitData.map((r: any) => [r.project_name, Number(r.total_revenue).toLocaleString(), Number(r.total_cost).toLocaleString(), Number(r.profit).toLocaleString(), r.profit_margin + '%']));
@@ -206,7 +241,19 @@ export default function ReportsPage({
               );
             }
             else if (tab === 'receivables') exportPDF('Receivables Aging', ['Customer','Unit','Sale Price','Paid','Balance','Status'], receivablesData.map((r: any) => [r.customer_name, r.unit_number, Number(r.total_sale_price).toLocaleString(), Number(r.total_paid).toLocaleString(), Number(r.balance).toLocaleString(), r.status]));
-            else if (tab === 'payables') exportPDF('Supplier Payables', ['Supplier','Total Orders','Amount (PKR)'], payablesData.map((r: any) => [r.supplier_name, r.total_orders, Number(r.total_amount).toLocaleString()]));
+            else if (tab === 'payables') exportPDF(
+              'Project Payables',
+              ['Project', 'Party', 'Category', 'Due', 'Amount', 'Paid', 'Balance'],
+              payablesData.map((r: any) => [
+                r.project_name,
+                r.party_name || r.supplier_name,
+                r.category,
+                r.due_date || r.expense_date || '',
+                Number(r.amount ?? r.total_ordered).toLocaleString(),
+                Number(r.paid_amount ?? r.total_paid).toLocaleString(),
+                Number(r.balance_due).toLocaleString(),
+              ]),
+            );
           }} className="border border-red-500 text-red-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-50">↓ PDF</button>
         </div>
       </div>
@@ -223,7 +270,7 @@ export default function ReportsPage({
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        {['profitability', 'budget', 'labour', 'expenses', 'payables', 'receivables'].includes(tab) && (
+        {['profitability', 'budget', 'pl', 'cashflow', 'labour', 'expenses', 'payables', 'receivables'].includes(tab) && (
           <select value={selectedProject} onChange={e => setSelectedProject(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">All Projects</option>
@@ -237,6 +284,17 @@ export default function ReportsPage({
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} placeholder="To"
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
           </>
+        )}
+        {tab === 'pl' && (
+          <label className="inline-flex items-center gap-2 border rounded-lg px-3 py-2 text-sm text-slate-700 bg-white">
+            <input
+              type="checkbox"
+              checked={includeUnsoldCosts}
+              onChange={(e) => setIncludeUnsoldCosts(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Include costs from projects with no sales
+          </label>
         )}
         {tab === 'partners-equity' && (
           <label className="text-xs text-slate-500 flex flex-col gap-1">
@@ -383,7 +441,18 @@ export default function ReportsPage({
             <div className="space-y-4">
               <div className="bg-white rounded-xl border p-5">
                 <div className="flex justify-between items-center mb-4">
-                  <h2 className="font-bold text-gray-800 text-lg">Profit & Loss Statement</h2>
+                  <div>
+                    <h2 className="font-bold text-gray-800 text-lg">Profit & Loss Statement</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {selectedProject
+                        ? projects.find((p) => p.id === selectedProject)?.name ?? 'Selected project'
+                        : 'All projects'}
+                      {' · '}
+                      {includeUnsoldCosts
+                        ? 'Including projects with no sales'
+                        : 'Excluding projects with no sales'}
+                    </p>
+                  </div>
                   <span className="text-sm text-gray-500">{plData.period.from} – {plData.period.to}</span>
                 </div>
 
@@ -623,65 +692,254 @@ export default function ReportsPage({
           )}
 
           {/* ─── Cashflow Report ─── */}
-          {tab === 'cashflow' && (
-            <div className="bg-white rounded-xl border overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50"><tr>
-                    <th className="px-4 py-3 text-left text-gray-600">Period</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Cash In</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Cash Out</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Net</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Running Balance</th>
-                  </tr></thead>
-                  <tbody>
-                    {cashflowData.length === 0 ? (
-                      <tr><td colSpan={5} className="text-center text-gray-400 py-10">No transactions in this period.</td></tr>
-                    ) : cashflowData.map((r, i) => (
-                      <tr key={i} className="border-t hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium">{r.period}</td>
-                        <td className="px-4 py-3 text-right font-mono text-green-600">+{fmt(r.cash_in)}</td>
-                        <td className="px-4 py-3 text-right font-mono text-red-600">-{fmt(r.cash_out)}</td>
-                        <td className={`px-4 py-3 text-right font-mono font-medium ${r.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                          {r.net >= 0 ? '+' : ''}{fmt(r.net)}
+          {tab === 'cashflow' && cashflowData && (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="font-bold text-gray-800 text-lg">Project Cash Position</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {selectedProject
+                      ? projects.find((p) => p.id === selectedProject)?.name ?? 'Selected project'
+                      : 'All projects'}
+                    {' · '}
+                    Actual cash plus outstanding items due within the selected dates.
+                  </p>
+                </div>
+                {!dateFrom && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Select a From date to calculate an opening cash balance.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {[
+                  {
+                    label: 'Opening Cash',
+                    value: cashflowData.summary.opening_cash,
+                    color: 'text-blue-700',
+                  },
+                  {
+                    label: 'Actual Closing',
+                    value: cashflowData.summary.actual_closing_cash,
+                    color: cashflowData.summary.actual_closing_cash >= 0 ? 'text-blue-700' : 'text-red-700',
+                  },
+                  {
+                    label: 'Due Receivables',
+                    value: cashflowData.summary.due_receivables,
+                    color: 'text-green-700',
+                  },
+                  {
+                    label: 'Due Payables',
+                    value: cashflowData.summary.due_payables,
+                    color: 'text-red-700',
+                  },
+                  {
+                    label: 'Expected Closing',
+                    value: cashflowData.summary.expected_closing_cash,
+                    color: cashflowData.summary.expected_closing_cash >= 0 ? 'text-green-700' : 'text-red-700',
+                  },
+                ].map((card) => (
+                  <div key={card.label} className="bg-white rounded-xl border p-4">
+                    <p className="text-xs text-slate-500">{card.label}</p>
+                    <p
+                      className={`font-mono font-bold text-lg mt-1 ${card.color}`}
+                      title={formatPkrFull(card.value)}
+                    >
+                      {formatPkrThousands(card.value)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-slate-50 border rounded-xl px-4 py-3 text-sm text-slate-600">
+                Expected Closing = Actual Closing + Due Receivables − Due Payables
+                <span className={`ml-2 font-mono font-bold ${
+                  cashflowData.summary.expected_net >= 0 ? 'text-green-700' : 'text-red-700'
+                }`}>
+                  (expected movement {cashflowData.summary.expected_net >= 0 ? '+' : ''}
+                  {formatPkrThousands(cashflowData.summary.expected_net)})
+                </span>
+              </div>
+
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b bg-slate-50">
+                  <p className="font-semibold text-sm text-slate-800">Actual Cash — Direct Method</p>
+                  <p className="text-xs text-slate-500">Posted cash and bank receipts/payments.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50"><tr>
+                      <th className="px-4 py-3 text-left text-gray-600">Period</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Cash Received</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Cash Paid</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Net</th>
+                      <th className="px-4 py-3 text-right text-gray-600">Closing Cash</th>
+                    </tr></thead>
+                    <tbody>
+                      {cashflowData.rows.length === 0 ? (
+                        <tr><td colSpan={5} className="text-center text-gray-400 py-10">No cash transactions in this period.</td></tr>
+                      ) : cashflowData.rows.map((r, i) => (
+                        <tr key={i} className="border-t hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium">{r.period}</td>
+                          <td className="px-4 py-3 text-right font-mono text-green-600">+{fmt(r.cash_in)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-red-600">-{fmt(r.cash_out)}</td>
+                          <td className={`px-4 py-3 text-right font-mono font-medium ${r.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {r.net >= 0 ? '+' : ''}{fmt(r.net)}
+                          </td>
+                          <td className={`px-4 py-3 text-right font-mono font-bold ${r.running_balance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                            {fmt(r.running_balance)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 border-t-2 font-semibold">
+                      <tr>
+                        <td className="px-4 py-3">Period totals</td>
+                        <td className="px-4 py-3 text-right font-mono text-green-700">
+                          {fmt(cashflowData.summary.actual_cash_in)}
                         </td>
-                        <td className={`px-4 py-3 text-right font-mono font-bold ${r.running_balance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                          {fmt(r.running_balance)}
+                        <td className="px-4 py-3 text-right font-mono text-red-700">
+                          {fmt(cashflowData.summary.actual_cash_out)}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono ${
+                          cashflowData.summary.actual_net >= 0 ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {cashflowData.summary.actual_net >= 0 ? '+' : ''}
+                          {fmt(cashflowData.summary.actual_net)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-blue-800">
+                          {fmt(cashflowData.summary.actual_closing_cash)}
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="bg-white rounded-xl border overflow-hidden">
+                  <div className="px-4 py-3 border-b bg-green-50">
+                    <p className="font-semibold text-sm text-green-800">Receivables Due</p>
+                    <p className="text-xs text-green-700">Outstanding installment balances by due date.</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50"><tr>
+                        <th className="px-3 py-2 text-left text-gray-600">Due</th>
+                        <th className="px-3 py-2 text-left text-gray-600">Customer / Unit</th>
+                        <th className="px-3 py-2 text-right text-gray-600">Amount</th>
+                      </tr></thead>
+                      <tbody>
+                        {cashflowData.due_receivables.length === 0 ? (
+                          <tr><td colSpan={3} className="text-center text-gray-400 py-8">No receivables due in this period.</td></tr>
+                        ) : cashflowData.due_receivables.map((r) => (
+                          <tr key={r.installment_id} className="border-t">
+                            <td className="px-3 py-2">{r.due_date}</td>
+                            <td className="px-3 py-2">
+                              <p className="font-medium">{r.party_name}</p>
+                              <p className="text-xs text-slate-400">
+                                {r.project_name} · Unit {r.unit_number}
+                              </p>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-semibold text-green-700">
+                              {formatPkrThousands(r.amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border overflow-hidden">
+                  <div className="px-4 py-3 border-b bg-red-50">
+                    <p className="font-semibold text-sm text-red-800">Payables Due</p>
+                    <p className="text-xs text-red-700">Outstanding project bills by due date.</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50"><tr>
+                        <th className="px-3 py-2 text-left text-gray-600">Due</th>
+                        <th className="px-3 py-2 text-left text-gray-600">Party / Category</th>
+                        <th className="px-3 py-2 text-right text-gray-600">Amount</th>
+                      </tr></thead>
+                      <tbody>
+                        {cashflowData.due_payables.length === 0 ? (
+                          <tr><td colSpan={3} className="text-center text-gray-400 py-8">No payables due in this period.</td></tr>
+                        ) : cashflowData.due_payables.map((r) => (
+                          <tr key={r.expense_id} className="border-t">
+                            <td className="px-3 py-2">{r.due_date}</td>
+                            <td className="px-3 py-2">
+                              <p className="font-medium">{r.party_name}</p>
+                              <p className="text-xs text-slate-400">
+                                {r.project_name} · {r.category}
+                              </p>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-semibold text-red-700">
+                              {formatPkrThousands(r.amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* ─── Supplier Payables ─── */}
+          {/* ─── Project Payables (unpaid bills) ─── */}
           {tab === 'payables' && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-500">Amounts in thousands (K). Hover a figure for the full PKR amount.</p>
+              <p className="text-xs text-slate-500">
+                Outstanding project bills (Unpaid / Partial). Amounts in thousands (K). Hover a figure for the full PKR amount.
+              </p>
               <div className="bg-white rounded-xl border overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50"><tr>
-                    <th className="px-4 py-3 text-left text-gray-600">Supplier</th>
-                    <th className="px-4 py-3 text-left text-gray-600">Phone</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Total Ordered</th>
-                    <th className="px-4 py-3 text-right text-gray-600">Total Paid</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Project</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Party</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Category</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Due Date</th>
+                    <th className="px-4 py-3 text-left text-gray-600">Status</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Bill Amount</th>
+                    <th className="px-4 py-3 text-right text-gray-600">Paid</th>
                     <th className="px-4 py-3 text-right text-gray-600">Balance Due</th>
                   </tr></thead>
                   <tbody>
                     {payablesData.length === 0 ? (
-                      <tr><td colSpan={5} className="text-center text-gray-400 py-10">No payables data.</td></tr>
-                    ) : payablesData.map(r => (
-                      <tr key={r.supplier_id} className="border-t hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium">{r.supplier_name}</td>
-                        <td className="px-4 py-3 text-gray-500">{r.phone ?? '-'}</td>
-                        <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(r.total_ordered)}>
-                          {formatPkrThousands(r.total_ordered)}
+                      <tr><td colSpan={8} className="text-center text-gray-400 py-10">No outstanding project bills.</td></tr>
+                    ) : payablesData.map(r => {
+                      const overdue = !!(r.due_date && r.due_date < new Date().toISOString().slice(0, 10));
+                      return (
+                      <tr key={r.expense_id || `${r.project_id}-${r.party_name}-${r.category}`} className="border-t hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium">{r.project_name}</td>
+                        <td className="px-4 py-3">
+                          <div>{r.party_name || r.supplier_name}</div>
+                          <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                            {r.vendor_type || 'OTHER'}
+                            {r.phone ? ` · ${r.phone}` : ''}
+                          </div>
                         </td>
-                        <td className="px-4 py-3 text-right font-mono text-green-600" title={formatPkrFull(r.total_paid)}>
-                          {formatPkrThousands(r.total_paid)}
+                        <td className="px-4 py-3 text-gray-600">{r.category || '—'}</td>
+                        <td className={`px-4 py-3 ${overdue ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
+                          {r.due_date || r.expense_date || '—'}
+                          {overdue && <span className="block text-[10px] uppercase tracking-wide">Overdue</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            r.status === 'Partial' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(r.amount ?? r.total_ordered)}>
+                          {formatPkrThousands(r.amount ?? r.total_ordered)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-green-600" title={formatPkrFull(r.paid_amount ?? r.total_paid)}>
+                          {formatPkrThousands(r.paid_amount ?? r.total_paid)}
                         </td>
                         <td
                           className={`px-4 py-3 text-right font-mono font-bold ${r.balance_due > 0 ? 'text-red-600' : 'text-green-600'}`}
@@ -690,20 +948,21 @@ export default function ReportsPage({
                           {formatPkrThousands(r.balance_due)}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   {payablesData.length > 0 && (() => {
-                    const totOrdered = payablesData.reduce((s, r) => s + r.total_ordered, 0);
-                    const totPaid = payablesData.reduce((s, r) => s + r.total_paid, 0);
+                    const totAmount = payablesData.reduce((s, r) => s + (r.amount ?? r.total_ordered), 0);
+                    const totPaid = payablesData.reduce((s, r) => s + (r.paid_amount ?? r.total_paid), 0);
                     const totDue = payablesData.reduce((s, r) => s + r.balance_due, 0);
                     return (
                       <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold">
                         <tr>
-                          <td colSpan={2} className="px-4 py-3 text-slate-700">
-                            Total ({payablesData.length} supplier{payablesData.length !== 1 ? 's' : ''})
+                          <td colSpan={5} className="px-4 py-3 text-slate-700">
+                            Total ({payablesData.length} bill{payablesData.length !== 1 ? 's' : ''})
                           </td>
-                          <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(totOrdered)}>
-                            {formatPkrThousands(totOrdered)}
+                          <td className="px-4 py-3 text-right font-mono" title={formatPkrFull(totAmount)}>
+                            {formatPkrThousands(totAmount)}
                           </td>
                           <td className="px-4 py-3 text-right font-mono text-green-700" title={formatPkrFull(totPaid)}>
                             {formatPkrThousands(totPaid)}
@@ -717,7 +976,7 @@ export default function ReportsPage({
                   })()}
                 </table>
               </div>
-            </div>
+              </div>
             </div>
           )}
 

@@ -115,33 +115,69 @@ export class ReportsService {
   }
 
   // ─── P&L Statement ───────────────────────────────────────────────────────
-  async getProfitLoss(from?: string, to?: string) {
+  async getProfitLoss(
+    from?: string,
+    to?: string,
+    project_id?: string,
+    include_unsold = true,
+  ) {
     const dateFilter = (col: string) => {
       const parts: string[] = [];
       if (from) parts.push(`${col} >= '${from}'`);
       if (to) parts.push(`${col} <= '${to}'`);
       return parts.length ? `AND ${parts.join(' AND ')}` : '';
     };
+    const projectParams = project_id ? [project_id] : [];
+    const saleProjectFilter = project_id ? 'AND pu.project_id = $1' : '';
+    const expenseProjectFilter = project_id ? 'AND e.project_id = $1' : '';
+    const labourProjectFilter = project_id ? 'AND lp.project_id = $1' : '';
+    const soldProjectFilter = project_id ? 'AND p.id = $1' : '';
+    const soldProjectCostsFilter = project_id ? 'WHERE p.id = $1' : '';
+    const soldProjectsOnlyExpenseFilter = include_unsold
+      ? ''
+      : `AND EXISTS (
+          SELECT 1
+          FROM sales sx
+          JOIN property_units pux ON pux.id = sx.property_unit_id
+          WHERE pux.project_id = e.project_id AND sx.status != 'Cancelled'
+        )`;
+    const soldProjectsOnlyLabourFilter = include_unsold
+      ? ''
+      : `AND EXISTS (
+          SELECT 1
+          FROM sales sx
+          JOIN property_units pux ON pux.id = sx.property_unit_id
+          WHERE pux.project_id = lp.project_id AND sx.status != 'Cancelled'
+        )`;
 
     // Revenue = recognized / passed sales (sale price), not installment collections
     const [revenue] = await this.q(`
       SELECT COALESCE(SUM(CAST(s.total_sale_price AS NUMERIC)), 0) AS total
       FROM sales s
-      WHERE s.status != 'Cancelled' ${dateFilter('s.sale_date')}
-    `);
+      JOIN property_units pu ON pu.id = s.property_unit_id
+      WHERE s.status != 'Cancelled'
+        ${saleProjectFilter}
+        ${dateFilter('s.sale_date')}
+    `, projectParams);
 
     const expenses_by_cat = await this.q(`
-      SELECT category, SUM(CAST(amount AS NUMERIC)) AS total
-      FROM expenses
-      WHERE 1=1 ${dateFilter('expense_date')}
-      GROUP BY category ORDER BY total DESC
-    `);
+      SELECT e.category, SUM(CAST(e.amount AS NUMERIC)) AS total
+      FROM expenses e
+      WHERE 1=1
+        ${expenseProjectFilter}
+        ${soldProjectsOnlyExpenseFilter}
+        ${dateFilter('e.expense_date')}
+      GROUP BY e.category ORDER BY total DESC
+    `, projectParams);
 
     const [labour_total] = await this.q(`
-      SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0) AS total
-      FROM labour_payments
-      WHERE 1=1 ${dateFilter('payment_date')}
-    `);
+      SELECT COALESCE(SUM(CAST(lp.amount AS NUMERIC)), 0) AS total
+      FROM labour_payments lp
+      WHERE 1=1
+        ${labourProjectFilter}
+        ${soldProjectsOnlyLabourFilter}
+        ${dateFilter('lp.payment_date')}
+    `, projectParams);
 
     const [fund_in] = await this.q(`
       SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0) AS total
@@ -166,6 +202,7 @@ export class ReportsService {
           (SELECT COALESCE(SUM(CAST(pu2.area_sqft AS NUMERIC)), 0) FROM property_units pu2
             WHERE pu2.project_id = p.id AND pu2.area_sqft IS NOT NULL AND CAST(pu2.area_sqft AS NUMERIC) > 0) AS total_area
         FROM projects p
+        ${soldProjectCostsFilter}
       )
       SELECT
         s.id::text AS sale_id,
@@ -196,9 +233,11 @@ export class ReportsService {
       JOIN projects p ON p.id = pu.project_id
       JOIN customers c ON c.id = s.customer_id
       LEFT JOIN project_costs pc ON pc.project_id = p.id
-      WHERE s.status != 'Cancelled' ${dateFilter('s.sale_date')}
+      WHERE s.status != 'Cancelled'
+        ${soldProjectFilter}
+        ${dateFilter('s.sale_date')}
       ORDER BY s.sale_date DESC, s.id DESC
-    `);
+    `, projectParams);
 
     const sold_units = sold_unit_rows.map((r: any) => {
       const sale_price = Number(r.sale_price);
@@ -241,6 +280,10 @@ export class ReportsService {
 
     return {
       period: { from: from ?? 'All time', to: to ?? 'All time' },
+      scope: {
+        project_id: project_id ?? null,
+        include_unsold,
+      },
       revenue: {
         sales_passed: total_revenue,
         total: total_revenue,
@@ -264,58 +307,75 @@ export class ReportsService {
     };
   }
 
-  // ─── Supplier Payables ────────────────────────────────────────────────────
+  // ─── Payables (outstanding project bills) ─────────────────────────────────
   async getSupplierPayables(project_id?: string) {
-    // Outstanding BILL expenses (AP), plus PO totals for context — separate subqueries (no join fan-out)
+    // All unpaid/partial BILL expenses across vendor types (supplier, labour, other),
+    // not only supplier-linked rows — so project pending payments show up.
     const params = project_id ? [project_id] : [];
     const expenseProjectFilter = project_id ? ' AND e.project_id = $1' : '';
-    const poProjectFilter = project_id ? ' AND po.project_id = $1' : '';
 
     const rows = await this.q(
       `
       SELECT
-        s.id AS supplier_id,
-        s.name AS supplier_name,
-        s.phone,
-        COALESCE((
-          SELECT SUM(CAST(po.total_amount AS NUMERIC))
-          FROM purchase_orders po
-          WHERE po.supplier_id = s.id AND po.status != 'Cancelled'
-          ${poProjectFilter}
-        ), 0) AS total_ordered,
-        COALESCE((
-          SELECT SUM(CAST(e.paid_amount AS NUMERIC))
-          FROM expenses e
-          WHERE e.supplier_id = s.id AND e.vendor_type = 'SUPPLIER'
-          ${expenseProjectFilter}
-        ), 0) AS total_paid,
-        COALESCE((
-          SELECT SUM(CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC))
-          FROM expenses e
-          WHERE e.supplier_id = s.id
-            AND e.vendor_type = 'SUPPLIER'
-            AND e.entry_mode = 'BILL'
-            AND e.status IN ('Unpaid', 'Partial')
-            ${expenseProjectFilter}
-        ), 0) AS balance_due
-      FROM suppliers s
-      WHERE s.is_active = true
-      ORDER BY balance_due DESC
+        e.id::text AS expense_id,
+        e.project_id::text AS project_id,
+        p.name AS project_name,
+        e.vendor_type,
+        CASE
+          WHEN e.vendor_type = 'SUPPLIER' AND s.id IS NOT NULL THEN s.id::text
+          WHEN e.vendor_type = 'LABOUR' AND lc.id IS NOT NULL THEN lc.id::text
+          ELSE NULL
+        END AS party_id,
+        CASE
+          WHEN e.vendor_type = 'SUPPLIER' AND s.name IS NOT NULL THEN s.name
+          WHEN e.vendor_type = 'LABOUR' AND lc.name IS NOT NULL THEN lc.name
+          WHEN e.description IS NOT NULL AND btrim(e.description) <> '' THEN e.description
+          ELSE 'Unassigned'
+        END AS party_name,
+        COALESCE(s.phone, lc.phone) AS phone,
+        e.category,
+        e.expense_date::text AS expense_date,
+        e.due_date::text AS due_date,
+        e.status,
+        CAST(e.amount AS NUMERIC) AS amount,
+        CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS paid_amount,
+        CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS balance_due
+      FROM expenses e
+      JOIN projects p ON p.id = e.project_id
+      LEFT JOIN suppliers s ON s.id = e.supplier_id
+      LEFT JOIN labour_contractors lc ON lc.id = e.contractor_id
+      WHERE e.entry_mode = 'BILL'
+        AND e.status IN ('Unpaid', 'Partial')
+        AND (CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC)) > 0.009
+        ${expenseProjectFilter}
+      ORDER BY
+        COALESCE(e.due_date, e.expense_date) ASC,
+        e.id ASC
     `,
       params,
     );
-    return rows
-      .map((r: any) => ({
-        ...r,
-        total_ordered: Number(r.total_ordered),
-        total_paid: Number(r.total_paid),
-        balance_due: Number(r.balance_due),
-      }))
-      .filter((r: any) =>
-        project_id
-          ? r.balance_due > 0.009 || r.total_ordered > 0.009 || r.total_paid > 0.009
-          : true,
-      );
+
+    return rows.map((r: any) => ({
+      expense_id: r.expense_id,
+      project_id: r.project_id,
+      project_name: r.project_name,
+      vendor_type: r.vendor_type,
+      party_id: r.party_id,
+      party_name: r.party_name,
+      // Keep legacy keys for older clients/exports
+      supplier_id: r.party_id,
+      supplier_name: r.party_name,
+      phone: r.phone,
+      category: r.category,
+      expense_date: r.expense_date,
+      due_date: r.due_date,
+      status: r.status,
+      amount: Number(r.amount),
+      paid_amount: Number(r.paid_amount),
+      balance_due: Number(r.balance_due),
+      total_ordered: Number(r.amount),
+      total_paid: Number(r.paid_amount),
+    }));
   }
 
   // ─── Customer Receivables ─────────────────────────────────────────────────
@@ -402,8 +462,14 @@ export class ReportsService {
   }
 
   // ─── Cashflow Report (grouped by period) ─────────────────────────────────
-  async getCashflowReport(period: 'daily' | 'weekly' | 'monthly' = 'monthly', from?: string, to?: string) {
-    // Derived from posted Cash & Bank journal lines (same source as Cashflow page)
+  async getCashflowReport(
+    period: 'daily' | 'weekly' | 'monthly' = 'monthly',
+    from?: string,
+    to?: string,
+    project_id?: string,
+  ) {
+    // Actual cash is derived from posted Cash & Bank journal lines.
+    // Forecast cash uses outstanding installment/bill balances by their due dates.
     const groupBy = period === 'daily'
       ? `je.entry_date::date`
       : period === 'weekly'
@@ -416,12 +482,36 @@ export class ReportsService {
       ? `TO_CHAR(DATE_TRUNC('week', je.entry_date::date), 'IYYY"-W"IW')`
       : `TO_CHAR(je.entry_date, 'YYYY-MM')`;
 
+    const actualParams: string[] = [];
     const dateWhere: string[] = [
       `je.status = 'Posted'`,
       `(a.code = '1000' OR a.parent_account_id = (SELECT id FROM accounts WHERE code = '1000' LIMIT 1))`,
+      `NOT EXISTS (
+        SELECT 1
+        FROM journal_entry_lines transfer_line
+        JOIN accounts transfer_account ON transfer_account.id = transfer_line.account_id
+        WHERE transfer_line.journal_entry_id = je.id
+          AND transfer_line.id != l.id
+          AND (
+            transfer_account.code = '1000'
+            OR transfer_account.parent_account_id = (
+              SELECT id FROM accounts WHERE code = '1000' LIMIT 1
+            )
+          )
+      )`,
     ];
-    if (from) dateWhere.push(`je.entry_date >= '${from}'`);
-    if (to) dateWhere.push(`je.entry_date <= '${to}'`);
+    if (from) {
+      actualParams.push(from);
+      dateWhere.push(`je.entry_date >= $${actualParams.length}`);
+    }
+    if (to) {
+      actualParams.push(to);
+      dateWhere.push(`je.entry_date <= $${actualParams.length}`);
+    }
+    if (project_id) {
+      actualParams.push(project_id);
+      dateWhere.push(`je.project_id = $${actualParams.length}`);
+    }
     const whereClause = `WHERE ${dateWhere.join(' AND ')}`;
 
     const rows = await this.q(`
@@ -435,10 +525,53 @@ export class ReportsService {
       ${whereClause}
       GROUP BY ${groupBy}
       ORDER BY ${groupBy}
-    `);
+    `, actualParams);
 
-    let runningBalance = 0;
-    return rows.map((r: any) => {
+    let openingCash = 0;
+    if (from) {
+      const openingParams: string[] = [from];
+      const openingWhere = [
+        `je.status = 'Posted'`,
+        `(a.code = '1000' OR a.parent_account_id = (SELECT id FROM accounts WHERE code = '1000' LIMIT 1))`,
+        `je.entry_date < $1`,
+        `NOT EXISTS (
+          SELECT 1
+          FROM journal_entry_lines transfer_line
+          JOIN accounts transfer_account ON transfer_account.id = transfer_line.account_id
+          WHERE transfer_line.journal_entry_id = je.id
+            AND transfer_line.id != l.id
+            AND (
+              transfer_account.code = '1000'
+              OR transfer_account.parent_account_id = (
+                SELECT id FROM accounts WHERE code = '1000' LIMIT 1
+              )
+            )
+        )`,
+      ];
+      if (project_id) {
+        openingParams.push(project_id);
+        openingWhere.push(`je.project_id = $${openingParams.length}`);
+      }
+      const [opening] = await this.q(
+        `
+        SELECT COALESCE(SUM(
+          CASE WHEN l.dr_cr = 'DEBIT'
+            THEN CAST(l.amount AS NUMERIC)
+            ELSE -CAST(l.amount AS NUMERIC)
+          END
+        ), 0) AS total
+        FROM journal_entry_lines l
+        JOIN journal_entries je ON je.id = l.journal_entry_id
+        JOIN accounts a ON a.id = l.account_id
+        WHERE ${openingWhere.join(' AND ')}
+        `,
+        openingParams,
+      );
+      openingCash = Number(opening?.total ?? 0);
+    }
+
+    let runningBalance = openingCash;
+    const actualRows = rows.map((r: any) => {
       runningBalance += Number(r.cash_in) - Number(r.cash_out);
       return {
         period: r.period,
@@ -448,6 +581,222 @@ export class ReportsService {
         running_balance: runningBalance,
       };
     });
+
+    // Classify each cash movement by its contra (non-cash) account so the
+    // statement can be presented as Operating / Investing / Financing.
+    const activityParams: string[] = [];
+    const activityWhere: string[] = [
+      `je.status = 'Posted'`,
+      `ca.code <> '1000'`,
+      `ca.parent_account_id IS DISTINCT FROM (SELECT id FROM accounts WHERE code = '1000' LIMIT 1)`,
+      `EXISTS (
+        SELECT 1
+        FROM journal_entry_lines cash_line
+        JOIN accounts cash_account ON cash_account.id = cash_line.account_id
+        WHERE cash_line.journal_entry_id = je.id
+          AND (
+            cash_account.code = '1000'
+            OR cash_account.parent_account_id = (
+              SELECT id FROM accounts WHERE code = '1000' LIMIT 1
+            )
+          )
+      )`,
+    ];
+    if (from) {
+      activityParams.push(from);
+      activityWhere.push(`je.entry_date >= $${activityParams.length}`);
+    }
+    if (to) {
+      activityParams.push(to);
+      activityWhere.push(`je.entry_date <= $${activityParams.length}`);
+    }
+    if (project_id) {
+      activityParams.push(project_id);
+      activityWhere.push(`je.project_id = $${activityParams.length}`);
+    }
+
+    // A non-cash CREDIT line is a source of cash (inflow);
+    // a non-cash DEBIT line is a use of cash (outflow).
+    const activityRows = await this.q(
+      `
+      SELECT
+        ca.code AS account_code,
+        ca.name AS account_name,
+        ca.type AS account_type,
+        COALESCE(SUM(CASE WHEN cl.dr_cr = 'CREDIT' THEN CAST(cl.amount AS NUMERIC) ELSE 0 END), 0) AS inflow,
+        COALESCE(SUM(CASE WHEN cl.dr_cr = 'DEBIT' THEN CAST(cl.amount AS NUMERIC) ELSE 0 END), 0) AS outflow
+      FROM journal_entry_lines cl
+      JOIN journal_entries je ON je.id = cl.journal_entry_id
+      JOIN accounts ca ON ca.id = cl.account_id
+      WHERE ${activityWhere.join(' AND ')}
+      GROUP BY ca.code, ca.name, ca.type
+      ORDER BY ca.code
+      `,
+      activityParams,
+    );
+
+    const classifyActivity = (
+      code: string,
+    ): 'operating' | 'investing' | 'financing' => {
+      if (code.startsWith('15')) return 'investing';
+      if (code.startsWith('21') || code.startsWith('30')) return 'financing';
+      return 'operating';
+    };
+
+    type ActivityLine = {
+      account_code: string;
+      account_name: string;
+      account_type: string;
+      inflow: number;
+      outflow: number;
+      net: number;
+    };
+    const activities: Record<
+      'operating' | 'investing' | 'financing',
+      { lines: ActivityLine[]; inflow: number; outflow: number; net: number }
+    > = {
+      operating: { lines: [], inflow: 0, outflow: 0, net: 0 },
+      investing: { lines: [], inflow: 0, outflow: 0, net: 0 },
+      financing: { lines: [], inflow: 0, outflow: 0, net: 0 },
+    };
+    for (const row of activityRows) {
+      const inflow = Number(row.inflow);
+      const outflow = Number(row.outflow);
+      if (inflow <= 0.009 && outflow <= 0.009) continue;
+      const bucket = activities[classifyActivity(String(row.account_code))];
+      bucket.lines.push({
+        account_code: row.account_code,
+        account_name: row.account_name,
+        account_type: row.account_type,
+        inflow,
+        outflow,
+        net: inflow - outflow,
+      });
+      bucket.inflow += inflow;
+      bucket.outflow += outflow;
+      bucket.net += inflow - outflow;
+    }
+
+    const dueParams: string[] = [];
+    const receivableWhere = [
+      `s.status != 'Cancelled'`,
+      `si.status != 'Paid'`,
+      `(CAST(si.due_amount AS NUMERIC) - CAST(COALESCE(si.paid_amount, 0) AS NUMERIC)) > 0.009`,
+    ];
+    const payableWhere = [
+      `e.entry_mode = 'BILL'`,
+      `e.status IN ('Unpaid', 'Partial')`,
+      `e.due_date IS NOT NULL`,
+      `(CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC)) > 0.009`,
+    ];
+    if (from) {
+      dueParams.push(from);
+      const p = `$${dueParams.length}`;
+      receivableWhere.push(`si.due_date >= ${p}`);
+      payableWhere.push(`e.due_date >= ${p}`);
+    }
+    if (to) {
+      dueParams.push(to);
+      const p = `$${dueParams.length}`;
+      receivableWhere.push(`si.due_date <= ${p}`);
+      payableWhere.push(`e.due_date <= ${p}`);
+    }
+    if (project_id) {
+      dueParams.push(project_id);
+      const p = `$${dueParams.length}`;
+      receivableWhere.push(`pu.project_id = ${p}`);
+      payableWhere.push(`e.project_id = ${p}`);
+    }
+
+    const dueReceivableRows = await this.q(
+      `
+      SELECT
+        si.id::text AS installment_id,
+        s.id::text AS sale_id,
+        pu.project_id::text AS project_id,
+        p.name AS project_name,
+        c.name AS party_name,
+        pu.unit_number,
+        si.due_date::text AS due_date,
+        CAST(si.due_amount AS NUMERIC) - CAST(COALESCE(si.paid_amount, 0) AS NUMERIC) AS amount
+      FROM sale_installments si
+      JOIN sales s ON s.id = si.sale_id
+      JOIN property_units pu ON pu.id = s.property_unit_id
+      JOIN projects p ON p.id = pu.project_id
+      JOIN customers c ON c.id = s.customer_id
+      WHERE ${receivableWhere.join(' AND ')}
+      ORDER BY si.due_date ASC, si.id ASC
+      `,
+      dueParams,
+    );
+
+    const duePayableRows = await this.q(
+      `
+      SELECT
+        e.id::text AS expense_id,
+        e.project_id::text AS project_id,
+        p.name AS project_name,
+        CASE
+          WHEN e.vendor_type = 'SUPPLIER' AND s.name IS NOT NULL THEN s.name
+          WHEN e.vendor_type = 'LABOUR' AND lc.name IS NOT NULL THEN lc.name
+          WHEN e.description IS NOT NULL AND btrim(e.description) <> '' THEN e.description
+          ELSE 'Unassigned'
+        END AS party_name,
+        e.category,
+        e.due_date::text AS due_date,
+        CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS amount
+      FROM expenses e
+      JOIN projects p ON p.id = e.project_id
+      LEFT JOIN suppliers s ON s.id = e.supplier_id
+      LEFT JOIN labour_contractors lc ON lc.id = e.contractor_id
+      WHERE ${payableWhere.join(' AND ')}
+      ORDER BY e.due_date ASC, e.id ASC
+      `,
+      dueParams,
+    );
+
+    const dueReceivables = dueReceivableRows.map((r: any) => ({
+      ...r,
+      amount: Number(r.amount),
+    }));
+    const duePayables = duePayableRows.map((r: any) => ({
+      ...r,
+      amount: Number(r.amount),
+    }));
+    const actualCashIn = actualRows.reduce((sum, r) => sum + r.cash_in, 0);
+    const actualCashOut = actualRows.reduce((sum, r) => sum + r.cash_out, 0);
+    const actualNet = actualCashIn - actualCashOut;
+    const actualClosingCash = openingCash + actualNet;
+    const expectedReceivables = dueReceivables.reduce((sum, r) => sum + r.amount, 0);
+    const expectedPayables = duePayables.reduce((sum, r) => sum + r.amount, 0);
+
+    return {
+      scope: {
+        project_id: project_id ?? null,
+        from: from ?? null,
+        to: to ?? null,
+        period,
+      },
+      summary: {
+        opening_cash: openingCash,
+        actual_cash_in: actualCashIn,
+        actual_cash_out: actualCashOut,
+        actual_net: actualNet,
+        actual_closing_cash: actualClosingCash,
+        due_receivables: expectedReceivables,
+        due_payables: expectedPayables,
+        expected_net: expectedReceivables - expectedPayables,
+        expected_closing_cash:
+          actualClosingCash + expectedReceivables - expectedPayables,
+        operating_net: activities.operating.net,
+        investing_net: activities.investing.net,
+        financing_net: activities.financing.net,
+      },
+      activities,
+      rows: actualRows,
+      due_receivables: dueReceivables,
+      due_payables: duePayables,
+    };
   }
 
   /**

@@ -261,7 +261,7 @@ export class CashflowService {
         WHERE status != 'Cancelled'
           AND CAST(total_sale_price AS NUMERIC) > CAST(total_paid AS NUMERIC)
       `),
-      // Payables = unpaid / partial supplier (and other) bills
+      // Payables = unpaid / partial bills (all vendor types)
       q(`
         SELECT COALESCE(SUM(
           CAST(amount AS NUMERIC) - CAST(COALESCE(paid_amount, 0) AS NUMERIC)
@@ -269,7 +269,6 @@ export class CashflowService {
         FROM expenses
         WHERE entry_mode = 'BILL'
           AND status IN ('Unpaid', 'Partial')
-          AND vendor_type = 'SUPPLIER'
       `),
       q(`SELECT COUNT(*) as count FROM property_units`),
       q(`SELECT COUNT(*) as count FROM property_units WHERE status = 'Sold'`),

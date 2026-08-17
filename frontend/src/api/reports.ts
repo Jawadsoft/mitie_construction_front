@@ -40,6 +40,7 @@ export interface SoldUnitProfit {
 
 export interface ProfitLoss {
   period: { from: string; to: string };
+  scope: { project_id: string | null; include_unsold: boolean };
   revenue: { sales_passed: number; total: number };
   expenses: { by_category: { category: string; amount: number }[]; labour: number; total: number };
   gross_profit: number; gross_margin_pct: number; fund_in: number;
@@ -55,8 +56,24 @@ export interface ProfitLoss {
 }
 
 export interface SupplierPayable {
-  supplier_id: string; supplier_name: string; phone: string;
-  total_ordered: number; total_paid: number; balance_due: number;
+  expense_id: string;
+  project_id: string;
+  project_name: string;
+  vendor_type: string;
+  party_id: string | null;
+  party_name: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  phone: string | null;
+  category: string;
+  expense_date: string;
+  due_date: string | null;
+  status: string;
+  amount: number;
+  paid_amount: number;
+  balance_due: number;
+  total_ordered: number;
+  total_paid: number;
 }
 
 export interface ReceivableRow {
@@ -80,6 +97,74 @@ export interface LabourCost {
 
 export interface CashflowRow {
   period: string; cash_in: number; cash_out: number; net: number; running_balance: number;
+}
+
+export interface CashflowDueReceivable {
+  installment_id: string;
+  sale_id: string;
+  project_id: string;
+  project_name: string;
+  party_name: string;
+  unit_number: string;
+  due_date: string;
+  amount: number;
+}
+
+export interface CashflowDuePayable {
+  expense_id: string;
+  project_id: string;
+  project_name: string;
+  party_name: string;
+  category: string;
+  due_date: string;
+  amount: number;
+}
+
+export interface CashflowActivityLine {
+  account_code: string;
+  account_name: string;
+  account_type: string;
+  inflow: number;
+  outflow: number;
+  net: number;
+}
+
+export interface CashflowActivitySection {
+  lines: CashflowActivityLine[];
+  inflow: number;
+  outflow: number;
+  net: number;
+}
+
+export interface CashflowReport {
+  scope: {
+    project_id: string | null;
+    from: string | null;
+    to: string | null;
+    period: string;
+  };
+  summary: {
+    opening_cash: number;
+    actual_cash_in: number;
+    actual_cash_out: number;
+    actual_net: number;
+    actual_closing_cash: number;
+    due_receivables: number;
+    due_payables: number;
+    expected_net: number;
+    expected_closing_cash: number;
+    operating_net: number;
+    investing_net: number;
+    financing_net: number;
+  };
+  activities: {
+    operating: CashflowActivitySection;
+    investing: CashflowActivitySection;
+    financing: CashflowActivitySection;
+  };
+  rows: CashflowRow[];
+  due_receivables: CashflowDueReceivable[];
+  due_payables: CashflowDuePayable[];
 }
 
 export interface ExpenseBreakdown {
@@ -124,10 +209,17 @@ export const getStageBudget = (project_id: string) =>
 export const getProfitability = (project_id?: string) =>
   get<ProjectProfitability[]>(`${BASE}/profitability${project_id ? `?project_id=${project_id}` : ''}`);
 
-export const getProfitLoss = (from?: string, to?: string) => {
+export const getProfitLoss = (
+  from?: string,
+  to?: string,
+  project_id?: string,
+  include_unsold = true,
+) => {
   const params = new URLSearchParams();
   if (from) params.append('from', from);
   if (to) params.append('to', to);
+  if (project_id) params.append('project_id', project_id);
+  params.append('include_unsold', String(include_unsold));
   return get<ProfitLoss>(`${BASE}/profit-loss?${params}`);
 };
 
@@ -143,11 +235,17 @@ export const getReceivables = (project_id?: string) =>
 export const getLabourCost = (project_id?: string) =>
   get<LabourCost>(`${BASE}/labour-cost${project_id ? `?project_id=${project_id}` : ''}`);
 
-export const getCashflowReport = (period = 'monthly', from?: string, to?: string) => {
+export const getCashflowReport = (
+  period = 'monthly',
+  from?: string,
+  to?: string,
+  project_id?: string,
+) => {
   const params = new URLSearchParams({ period });
   if (from) params.append('from', from);
   if (to) params.append('to', to);
-  return get<CashflowRow[]>(`${BASE}/cashflow?${params}`);
+  if (project_id) params.append('project_id', project_id);
+  return get<CashflowReport>(`${BASE}/cashflow?${params}`);
 };
 
 export const getExpenseBreakdown = (project_id?: string) =>

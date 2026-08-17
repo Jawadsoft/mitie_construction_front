@@ -21,8 +21,18 @@ export class ReportsController {
   }
 
   @Get('profit-loss')
-  getProfitLoss(@Query('from') from?: string, @Query('to') to?: string) {
-    return this.svc.getProfitLoss(from, to);
+  getProfitLoss(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('project_id') project_id?: string,
+    @Query('include_unsold') include_unsold?: string,
+  ) {
+    return this.svc.getProfitLoss(
+      from,
+      to,
+      project_id,
+      include_unsold !== 'false',
+    );
   }
 
   @Get('partners-equity')
@@ -50,8 +60,9 @@ export class ReportsController {
     @Query('period') period: 'daily' | 'weekly' | 'monthly' = 'monthly',
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('project_id') project_id?: string,
   ) {
-    return this.svc.getCashflowReport(period, from, to);
+    return this.svc.getCashflowReport(period, from, to, project_id);
   }
 
   @Get('expenses')

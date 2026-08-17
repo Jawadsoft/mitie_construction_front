@@ -23,10 +23,17 @@ export interface DashboardStats {
 
 const BASE = `${API_BASE}/api/cashflow`;
 
-export async function getCashTransactions(filters?: { project_id?: string; type?: string }): Promise<CashTransaction[]> {
+export async function getCashTransactions(filters?: {
+  project_id?: string;
+  type?: string;
+  from?: string;
+  to?: string;
+}): Promise<CashTransaction[]> {
   const params = new URLSearchParams();
   if (filters?.project_id) params.append('project_id', filters.project_id);
   if (filters?.type) params.append('type', filters.type);
+  if (filters?.from) params.append('from', filters.from);
+  if (filters?.to) params.append('to', filters.to);
   const res = await fetch(`${BASE}?${params}`, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to fetch cash transactions');
   return res.json();
