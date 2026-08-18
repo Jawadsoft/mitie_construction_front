@@ -3,7 +3,7 @@ import Modal from './Modal';
 import { formatDate } from '../utils/date';
 import type { Project } from '../api/projects';
 import { getExpenses, getExpensePayments } from '../api/expenses';
-import type { Expense, ExpensePayment } from '../api/expenses';
+import type { Expense } from '../api/expenses';
 import { getPayments } from '../api/labour';
 import type { LabourPayment } from '../api/labour';
 import { getIssues } from '../api/inventory';
@@ -198,7 +198,6 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
   }, [project.id, kind]);
 
   const accruedExpense = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
-  const paidExpense = expenses.reduce((s, e) => s + Number(e.paid_amount || 0), 0);
   const labourTotal = labour.reduce((s, p) => s + Number(p.amount || 0), 0);
   const materialTotal = issues.reduce((s, i) => s + Number(i.total_cost || 0), 0);
   const soldTotal = Number(project.computed?.sold_value ?? 0);
