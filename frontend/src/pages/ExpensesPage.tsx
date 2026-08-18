@@ -186,7 +186,7 @@ export default function ExpensesPage() {
   const openEdit = (e: Expense) => {
     setEditing(e);
     const next = {
-      project_id: e.project_id, project_stage_id: e.project_stage_id,
+      project_id: e.project_id ?? '', project_stage_id: e.project_stage_id ?? '',
       category: e.category, vendor_type: e.vendor_type,
       supplier_id: e.supplier_id ?? '', contractor_id: e.contractor_id ?? '',
       entry_mode: (e.entry_mode === 'BILL' ? 'BILL' : 'DIRECT') as 'DIRECT' | 'BILL',
