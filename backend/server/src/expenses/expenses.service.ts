@@ -168,6 +168,112 @@ export class ExpensesService {
     });
   }
 
+  private billStatus(amount: string | number, paid: string | number) {
+    if (Number(paid) <= 0.009) return 'Unpaid';
+    if (Number(paid) >= Number(amount) - 0.009) return 'Paid';
+    return 'Partial';
+  }
+
+  async updatePayment(
+    expenseId: string,
+    paymentId: string,
+    dto: {
+      amount?: string;
+      paid_date?: string;
+      payment_method?: string;
+      bank_account_id?: string | null;
+      notes?: string | null;
+    },
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const expenseRepo = manager.getRepository(Expense);
+      const payRepo = manager.getRepository(ExpensePayment);
+      const expense = await expenseRepo.findOne({ where: { id: expenseId } });
+      if (!expense) throw new NotFoundException('Expense not found');
+      if (expense.entry_mode !== 'BILL') {
+        throw new BadRequestException('Only accrual bills have payment history');
+      }
+      const payment = await payRepo.findOne({ where: { id: paymentId, expense_id: expenseId } });
+      if (!payment) throw new NotFoundException('Payment not found');
+
+      const nextAmount =
+        dto.amount !== undefined ? Number(dto.amount) : Number(payment.amount);
+      if (!(nextAmount > 0)) throw new BadRequestException('Payment amount must be positive');
+      const others = await payRepo.find({ where: { expense_id: expenseId } });
+      const othersSum = others
+        .filter((p) => String(p.id) !== String(paymentId))
+        .reduce((sum, p) => sum + Number(p.amount), 0);
+      if (othersSum + nextAmount > Number(expense.amount) + 0.009) {
+        const max = Number(expense.amount) - othersSum;
+        throw new BadRequestException(`Payment exceeds bill balance (max PKR ${max.toFixed(2)})`);
+      }
+
+      const method = dto.payment_method !== undefined ? dto.payment_method : payment.payment_method;
+      const bank_account_id =
+        dto.bank_account_id !== undefined ? dto.bank_account_id || null : payment.bank_account_id;
+      const usesBank = method === 'Bank Transfer' || method === 'Cheque' || method === 'Bank';
+      if (usesBank && !bank_account_id) {
+        throw new BadRequestException('Select a partner bank for this payment');
+      }
+
+      await payRepo.update(paymentId, {
+        amount: nextAmount.toFixed(2),
+        paid_date: dto.paid_date !== undefined ? dto.paid_date : payment.paid_date,
+        payment_method: method,
+        bank_account_id,
+        notes: dto.notes !== undefined ? dto.notes || null : payment.notes,
+      });
+
+      const newPaid = (othersSum + nextAmount).toFixed(2);
+      await expenseRepo.update(expenseId, {
+        paid_amount: newPaid,
+        status: this.billStatus(expense.amount, newPaid),
+      });
+
+      const updatedPayment = await payRepo.findOne({ where: { id: paymentId } });
+      const updatedExpense = await expenseRepo.findOne({ where: { id: expenseId } });
+      if (!updatedPayment || !updatedExpense) throw new NotFoundException('Payment not found');
+
+      await this.accounting.deleteJournalByReference(`EXPPMT-${paymentId}`, manager);
+      await this.accounting.postExpenseBillPaymentJournal(
+        updatedExpense,
+        {
+          id: updatedPayment.id,
+          amount: updatedPayment.amount,
+          paid_date: updatedPayment.paid_date,
+          payment_method: updatedPayment.payment_method,
+          bank_account_id: updatedPayment.bank_account_id,
+        },
+        manager,
+      );
+
+      return { expense: updatedExpense, payment: updatedPayment };
+    });
+  }
+
+  async removePayment(expenseId: string, paymentId: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const expenseRepo = manager.getRepository(Expense);
+      const payRepo = manager.getRepository(ExpensePayment);
+      const expense = await expenseRepo.findOne({ where: { id: expenseId } });
+      if (!expense) throw new NotFoundException('Expense not found');
+      const payment = await payRepo.findOne({ where: { id: paymentId, expense_id: expenseId } });
+      if (!payment) throw new NotFoundException('Payment not found');
+
+      await this.accounting.deleteJournalByReference(`EXPPMT-${paymentId}`, manager);
+      await payRepo.delete(paymentId);
+
+      const remaining = await payRepo.find({ where: { expense_id: expenseId } });
+      const newPaid = remaining.reduce((sum, p) => sum + Number(p.amount), 0).toFixed(2);
+      await expenseRepo.update(expenseId, {
+        paid_amount: newPaid,
+        status: this.billStatus(expense.amount, newPaid),
+      });
+      const updated = await expenseRepo.findOne({ where: { id: expenseId } });
+      return { expense: updated };
+    });
+  }
+
   async update(id: string, dto: Partial<Expense>, userId?: string) {
     return this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(Expense);

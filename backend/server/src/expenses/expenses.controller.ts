@@ -45,8 +45,25 @@ export class ExpensesController {
   }
 
   @Post(':id/pay')
+  @UseGuards(JwtAuthGuard)
   payBill(@Param('id') id: string, @Body() dto: any) {
     return this.svc.payBill(id, dto);
+  }
+
+  @Patch(':id/payments/:paymentId')
+  @UseGuards(JwtAuthGuard)
+  updatePayment(
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: any,
+  ) {
+    return this.svc.updatePayment(id, paymentId, dto);
+  }
+
+  @Delete(':id/payments/:paymentId')
+  @UseGuards(JwtAuthGuard)
+  removePayment(@Param('id') id: string, @Param('paymentId') paymentId: string) {
+    return this.svc.removePayment(id, paymentId);
   }
 
   @Patch(':id')

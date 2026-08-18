@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   getExpenses, createExpense, updateExpense, deleteExpense, payExpenseBill,
+  getExpensePayments, updateExpensePayment, deleteExpensePayment,
 } from '../api/expenses';
-import type { Expense } from '../api/expenses';
+import type { Expense, ExpensePayment } from '../api/expenses';
 import { getProjects, normalizeProjectFields } from '../api/projects';
 import type { Project } from '../api/projects';
 import { getSuppliers } from '../api/suppliers';
@@ -114,6 +115,8 @@ export default function ExpensesPage() {
   const [payBaseline, setPayBaseline] = useState(emptyPayForm);
   const [stages, setStages] = useState<{ id: string; name: string }[]>([]);
   const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
+  const [drawerPayments, setDrawerPayments] = useState<ExpensePayment[]>([]);
+  const [editingPayment, setEditingPayment] = useState<ExpensePayment | null>(null);
   const selectedProject = projects.find((p) => p.id === form.project_id);
   const isDirectSale = selectedProject
     ? normalizeProjectFields(selectedProject).project_strategy === 'DIRECT_SALE'
@@ -143,6 +146,18 @@ export default function ExpensesPage() {
   };
 
   useEffect(() => { load(); }, [filterProject, filterStatus]);
+
+  useEffect(() => {
+    if (!drawerExpense || drawerExpense.entry_mode !== 'BILL') {
+      setDrawerPayments([]);
+      return;
+    }
+    let cancelled = false;
+    getExpensePayments(drawerExpense.id)
+      .then((rows) => { if (!cancelled) setDrawerPayments(rows); })
+      .catch(() => { if (!cancelled) setDrawerPayments([]); });
+    return () => { cancelled = true; };
+  }, [drawerExpense?.id, drawerExpense?.entry_mode, drawerExpense?.paid_amount]);
 
   useEffect(() => {
     if (form.project_id) {
@@ -187,7 +202,24 @@ export default function ExpensesPage() {
   const openPay = (e: Expense) => {
     const bal = Math.max(0, Number(e.amount) - Number(e.paid_amount || 0));
     setPaying(e);
+    setEditingPayment(null);
     const next = { ...emptyPayForm, amount: String(bal) };
+    setPayForm(next);
+    setPayBaseline(next);
+    setError('');
+    setShowPayModal(true);
+  };
+
+  const openEditPayment = (e: Expense, p: ExpensePayment) => {
+    setPaying(e);
+    setEditingPayment(p);
+    const next = {
+      amount: p.amount,
+      paid_date: p.paid_date,
+      payment_method: p.payment_method || 'Cash',
+      bank_account_id: p.bank_account_id ?? '',
+      notes: p.notes ?? '',
+    };
     setPayForm(next);
     setPayBaseline(next);
     setError('');
@@ -269,19 +301,47 @@ export default function ExpensesPage() {
     }
     setError('');
     try {
-      await payExpenseBill(paying.id, {
+      const payload = {
         amount: payForm.amount,
         paid_date: payForm.paid_date,
         payment_method: payForm.payment_method,
         bank_account_id: payForm.bank_account_id || undefined,
         notes: payForm.notes || undefined,
-      });
+      };
+      const wasEdit = !!editingPayment;
+      const result = editingPayment
+        ? await updateExpensePayment(paying.id, editingPayment.id, payload)
+        : await payExpenseBill(paying.id, payload);
       setShowPayModal(false);
       setPaying(null);
+      setEditingPayment(null);
+      if (drawerExpense?.id === paying.id && result.expense) {
+        setDrawerExpense(result.expense);
+      }
       load();
+      notify.success(wasEdit ? 'Payment updated' : 'Payment recorded');
     } catch (e: any) {
       setError(e.message);
       throw e;
+    }
+  };
+
+  const handleDeletePayment = async (e: Expense, p: ExpensePayment) => {
+    const ok = await confirm({
+      title: 'Delete this payment?',
+      message: `Remove PKR ${Number(p.amount).toLocaleString()} paid on ${p.paid_date}? The bill balance will increase.`,
+      confirmLabel: 'Delete payment',
+    });
+    if (!ok) return;
+    try {
+      const result = await deleteExpensePayment(e.id, p.id);
+      if (result.expense) {
+        setDrawerExpense(result.expense);
+        setExpenses((prev) => prev.map((row) => (row.id === result.expense.id ? result.expense : row)));
+      }
+      notify.success('Payment deleted');
+    } catch (err) {
+      notifyError(err, 'Failed to delete payment');
     }
   };
 
@@ -302,7 +362,7 @@ export default function ExpensesPage() {
     active: showPayModal,
     isDirty: payDirty,
     onSave: handlePay,
-    onDiscard: () => { setShowPayModal(false); setPaying(null); },
+    onDiscard: () => { setShowPayModal(false); setPaying(null); setEditingPayment(null); },
   });
 
   const handleDelete = async (id: string) => {
@@ -448,6 +508,9 @@ export default function ExpensesPage() {
                           <div className="flex justify-center gap-1 flex-wrap">
                             {canPay && (
                               <button onClick={() => openPay(e)} className="text-green-700 hover:text-green-900 text-xs font-medium px-2 py-1 rounded hover:bg-green-50">Pay</button>
+                            )}
+                            {e.entry_mode === 'BILL' && Number(e.paid_amount || 0) > 0 && (
+                              <button onClick={() => setDrawerExpense(e)} className="text-slate-700 hover:text-slate-900 text-xs font-medium px-2 py-1 rounded hover:bg-slate-50">Payments</button>
                             )}
                             <button onClick={() => openEdit(e)} className="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">Edit</button>
                             <button onClick={() => handleDelete(e.id)} className="text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">Delete</button>
@@ -671,14 +734,14 @@ export default function ExpensesPage() {
 
       {showPayModal && paying && (
         <Modal
-          title={`Pay bill — ${paying.category}`}
+          title={editingPayment ? `Edit payment — ${paying.category}` : `Pay bill — ${paying.category}`}
           mode="form"
           isDirty={payDirty}
-          onClose={() => setShowPayModal(false)}
+          onClose={() => { setShowPayModal(false); setPaying(null); setEditingPayment(null); }}
           footer={
             <ModalFormFooter
               onSave={() => void handlePay()}
-              saveLabel="Record Payment"
+              saveLabel={editingPayment ? 'Save Payment' : 'Record Payment'}
               error={error ? <p className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p> : null}
             />
           }
@@ -686,7 +749,12 @@ export default function ExpensesPage() {
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
               Bill PKR {Number(paying.amount).toLocaleString()} · Paid PKR {Number(paying.paid_amount || 0).toLocaleString()} ·
-              Balance <span className="font-semibold text-amber-700">PKR {(Number(paying.amount) - Number(paying.paid_amount || 0)).toLocaleString()}</span>
+              Balance <span className="font-semibold text-amber-700">PKR {(
+                Number(paying.amount)
+                - Number(paying.paid_amount || 0)
+                + (editingPayment ? Number(editingPayment.amount) : 0)
+              ).toLocaleString()}</span>
+              {editingPayment ? ' available for this payment' : ''}
               {paying.due_date && (
                 <span className={isOverdue(paying.due_date, paying.status) ? ' text-red-600' : ''}>
                   {' '}· Due {paying.due_date}
@@ -713,26 +781,28 @@ export default function ExpensesPage() {
                 onChange={(e) => setPayForm((f) => ({
                   ...f,
                   payment_method: e.target.value,
-                  bank_account_id: needsBank(e.target.value) ? f.bank_account_id : '',
                 }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               >
                 {DIRECT_PAYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            {needsBank(payForm.payment_method) && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Pay from bank *</label>
-                <select
-                  value={payForm.bank_account_id}
-                  onChange={(e) => setPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">-- Select bank account --</option>
-                  {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(b)}</option>)}
-                </select>
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Pay from (Cash & Bank){needsBank(payForm.payment_method) ? ' *' : ''}
+              </label>
+              <select
+                value={payForm.bank_account_id}
+                onChange={(e) => setPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">Cash on hand (1000)</option>
+                {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(b)}</option>)}
+              </select>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Choose the till or bank this payment leaves. Cash on hand posts to account 1000.
+              </p>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
               <input value={payForm.notes} onChange={(e) => setPayForm((f) => ({ ...f, notes: e.target.value }))}
@@ -789,6 +859,12 @@ export default function ExpensesPage() {
             <DrawerField label="Status" value={drawerExpense.status} />
             <DrawerField label="Amount" value={`PKR ${Number(drawerExpense.amount).toLocaleString()}`} />
             <DrawerField label="Paid" value={`PKR ${Number(drawerExpense.paid_amount || 0).toLocaleString()}`} />
+            {drawerExpense.entry_mode === 'BILL' && (
+              <DrawerField
+                label="Balance"
+                value={`PKR ${Math.max(0, Number(drawerExpense.amount) - Number(drawerExpense.paid_amount || 0)).toLocaleString()}`}
+              />
+            )}
             <DrawerField label="Payment Type" value={drawerExpense.payment_type} />
             <DrawerField label="Description" value={drawerExpense.description} />
             <DrawerField label="Vendor Type" value={drawerExpense.vendor_type} />
@@ -800,6 +876,64 @@ export default function ExpensesPage() {
             )}
             {drawerExpense.created_at && (
               <DrawerField label="Created At" value={String(drawerExpense.created_at).slice(0, 19)} />
+            )}
+            {drawerExpense.entry_mode === 'BILL' && (
+              <>
+                <DrawerSection title="Payments against this bill" />
+                {drawerPayments.length === 0 ? (
+                  <p className="text-sm text-slate-500 py-2">No payments recorded yet.</p>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden mt-1 mb-3">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 text-slate-500">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-medium">Date</th>
+                          <th className="text-left px-3 py-2 font-medium">Method</th>
+                          <th className="text-right px-3 py-2 font-medium">Amount</th>
+                          <th className="px-3 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {drawerPayments.map((p) => (
+                          <tr key={p.id} className="border-t">
+                            <td className="px-3 py-2">
+                              {p.paid_date}
+                              {p.notes && <p className="text-[11px] text-slate-400 mt-0.5">{p.notes}</p>}
+                            </td>
+                            <td className="px-3 py-2">
+                              {p.payment_method || 'Cash'}
+                              {p.bank_account_id && (
+                                <p className="text-[11px] text-slate-400">
+                                  {banks.find((b) => b.id === p.bank_account_id)?.name || `Bank #${p.bank_account_id}`}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-medium">
+                              {Number(p.amount).toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                className="text-blue-600 hover:text-blue-800 font-medium px-1"
+                                onClick={() => openEditPayment(drawerExpense, p)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="text-red-600 hover:text-red-800 font-medium px-1"
+                                onClick={() => void handleDeletePayment(drawerExpense, p)}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

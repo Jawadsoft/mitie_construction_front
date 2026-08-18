@@ -87,6 +87,40 @@ export async function getExpensePayments(id: string): Promise<ExpensePayment[]> 
   return res.json();
 }
 
+export async function updateExpensePayment(
+  expenseId: string,
+  paymentId: string,
+  dto: {
+    amount?: string;
+    paid_date?: string;
+    payment_method?: string;
+    bank_account_id?: string | null;
+    notes?: string | null;
+  },
+): Promise<{ expense: Expense; payment: ExpensePayment }> {
+  const res = await fetch(`${BASE}/${expenseId}/payments/${paymentId}`, {
+    method: 'PATCH',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(dto),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || 'Failed to update bill payment');
+  return data;
+}
+
+export async function deleteExpensePayment(
+  expenseId: string,
+  paymentId: string,
+): Promise<{ expense: Expense }> {
+  const res = await fetch(`${BASE}/${expenseId}/payments/${paymentId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Failed to delete bill payment');
+  return data;
+}
+
 export async function updateExpense(id: string, dto: Partial<Expense>): Promise<Expense> {
   const res = await fetch(`${BASE}/${id}`, {
     method: 'PATCH', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
