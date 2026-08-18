@@ -96,7 +96,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
     (async () => {
       setLoading(true);
       setError('');
-      
+
       try {
         if (kind === 'accrued' || kind === 'paid' || kind === 'profit' || kind === 'balance' || kind === 'payable_balance') {
           const [ex, lp, mi, banks] = await Promise.all([
@@ -127,7 +127,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                   id: `exp-${e.id}`,
                   date: e.expense_date,
                   source: cashSource(e.payment_type, e.bank_account_id, banks),
-                  kind: 'Direct',
+                  kind: 'Payment',
                   detail: e.category + (e.description ? ` · ${e.description}` : ''),
                   amount: Number(e.paid_amount),
                 });
@@ -139,8 +139,8 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                   id: `pmt-${payment.id}`,
                   date: payment.paid_date,
                   source: cashSource(payment.payment_method, payment.bank_account_id, banks),
-                  kind: 'Bill payment',
-                  detail: expense.category + (expense.description ? ` · ${expense.description}` : ''),
+                  kind: 'Payment',
+                  detail: [expense.category, payment.notes || expense.description].filter(Boolean).join(' · '),
                   amount: Number(payment.amount),
                 });
               }
@@ -150,8 +150,8 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                 id: `lab-${p.id}`,
                 date: p.payment_date,
                 source: cashSource(p.payment_method, p.bank_account_id, banks),
-                kind: 'Labour',
-                detail: p.contractor?.name ?? 'Labour',
+                kind: 'Payment',
+                detail: p.contractor?.name ? `Labour · ${p.contractor.name}` : 'Labour',
                 amount: Number(p.amount),
               });
             }
@@ -412,7 +412,6 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                       <tr>
                         <th className="px-3 py-2 text-left text-gray-600">Date</th>
                         <th className="px-3 py-2 text-left text-gray-600">Paid from</th>
-                        <th className="px-3 py-2 text-left text-gray-600">Type</th>
                         <th className="px-3 py-2 text-left text-gray-600">Detail</th>
                         <th className="px-3 py-2 text-right text-gray-600">Amount</th>
                       </tr>
@@ -420,7 +419,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                     <tbody>
                       {cashOut.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-400">
+                          <td colSpan={4} className="px-3 py-6 text-center text-slate-400">
                             No cash or bank payments yet
                           </td>
                         </tr>
@@ -429,7 +428,6 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                           <tr key={r.id} className="border-t">
                             <td className="px-3 py-2">{formatDate(r.date)}</td>
                             <td className="px-3 py-2 text-xs">{r.source}</td>
-                            <td className="px-3 py-2 text-xs">{r.kind}</td>
                             <td className="px-3 py-2">{r.detail}</td>
                             <td className="px-3 py-2 text-right font-mono text-red-600">
                               {r.amount.toLocaleString()}
@@ -441,8 +439,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                   </table>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Cash and cash equivalents only: direct payments, bill payments, and labour paid from cash or bank.
-                  Unpaid accrual bills are excluded.
+                  Each row is a cash or bank payment. Unpaid bills are not listed.
                 </p>
               </div>
             )}
