@@ -6,7 +6,7 @@ import { createCashTransaction } from '../api/cashflow';
 import { collectSalePayment, getSale, getSales, recordPayment } from '../api/sales';
 import type { Sale, SaleInstallment } from '../api/sales';
 import type { Project, Stage } from '../api/projects';
-import { getProject } from '../api/projects';
+import { getProject, normalizeProjectFields } from '../api/projects';
 import { getBankAccounts } from '../api/accounting';
 import type { BankAccount } from '../api/accounting';
 import { notify, notifyError } from '../utils/toast';
@@ -183,8 +183,10 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
         ? `Quick collection — ${project.name}`
         : `Quick payment — ${project.name}`;
 
+  const isDirectSale = normalizeProjectFields(project).project_strategy === 'DIRECT_SALE';
+
   const handleSaveExpense = async () => {
-    if (!expenseForm.project_stage_id) {
+    if (!isDirectSale && !expenseForm.project_stage_id) {
       setError('Add a stage to this project first, then record expenses.');
       return;
     }
@@ -205,7 +207,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     try {
       await createExpense({
         project_id: project.id,
-        project_stage_id: expenseForm.project_stage_id,
+        ...(expenseForm.project_stage_id ? { project_stage_id: expenseForm.project_stage_id } : {}),
         category: expenseForm.category,
         vendor_type: 'OTHER',
         entry_mode: expenseForm.entry_mode,
@@ -410,22 +412,24 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
           <p className="text-sm text-slate-500 py-4 text-center">Loading…</p>
         ) : kind === 'expense' ? (
           <>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Stage *</label>
-              <select
-                value={expenseForm.project_stage_id}
-                onChange={(e) => setExpenseForm((f) => ({ ...f, project_stage_id: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">-- Select stage --</option>
-                {stages.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              {stages.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1">No stages yet — open project details and add a stage first.</p>
-              )}
-            </div>
+            {!isDirectSale && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Stage *</label>
+                <select
+                  value={expenseForm.project_stage_id}
+                  onChange={(e) => setExpenseForm((f) => ({ ...f, project_stage_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">-- Select stage --</option>
+                  {stages.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {stages.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1">No stages yet — open project details and add a stage first.</p>
+                )}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Entry type *</label>
               <div className="flex gap-4">
@@ -548,14 +552,6 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
                 placeholder="Optional"
               />
             </div>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleSaveExpense}
-              className="w-full bg-red-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : expenseForm.entry_mode === 'BILL' ? 'Record Bill' : 'Save Expense'}
-            </button>
           </>
         ) : kind === 'collection' ? (
           <>

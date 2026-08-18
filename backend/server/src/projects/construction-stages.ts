@@ -1,3 +1,6 @@
+/** Hidden cost bucket for DIRECT_SALE projects (no construction timeline). */
+export const DIRECT_SALE_DEFAULT_STAGE_NAME = 'Direct Sale';
+
 /** Canonical construction stages for DEVELOPMENT projects (sequence_order 1..n). */
 export const DEVELOPMENT_STAGE_TEMPLATE: ReadonlyArray<{
   name: string;

@@ -10,6 +10,7 @@ import { SellDuringConstructionDto } from './dto/sell-during-construction.dto';
 import { assertProjectTaxonomy, deriveAssetClass, normalizeTaxonomyInput } from './project-taxonomy';
 import {
   DEVELOPMENT_STAGE_TEMPLATE,
+  DIRECT_SALE_DEFAULT_STAGE_NAME,
   PROJECT_STATUSES,
   STAGE_LOCKED_STATUSES,
 } from './construction-stages';
@@ -65,6 +66,39 @@ export class ProjectsService {
         `Stages cannot be edited when project status is "${project.status}"`,
       );
     }
+  }
+
+  /**
+   * DIRECT_SALE projects have no construction timeline, but expenses still need a
+   * stage_id. Ensure a single default cost bucket exists and return it.
+   */
+  async ensureDirectSaleDefaultStage(projectId: string): Promise<ProjectStage> {
+    const existing = await this.stagesRepo.find({
+      where: { project_id: projectId },
+      order: { sequence_order: 'ASC', id: 'ASC' },
+    });
+    if (existing[0]) return existing[0];
+    return this.stagesRepo.save(
+      this.stagesRepo.create({
+        project_id: projectId,
+        name: DIRECT_SALE_DEFAULT_STAGE_NAME,
+        description: 'Default cost bucket for direct-sale land and ready property',
+        sequence_order: 1,
+        completion_percent: '100',
+        status: 'Active',
+      }),
+    );
+  }
+
+  async resolveExpenseStageId(projectId: string, stageId?: string | null): Promise<string> {
+    const project = await this.projectsRepo.findOne({ where: { id: projectId } });
+    if (!project) throw new NotFoundException('Project not found');
+    if (stageId) return String(stageId);
+    if (project.project_strategy === 'DIRECT_SALE') {
+      const stage = await this.ensureDirectSaleDefaultStage(projectId);
+      return String(stage.id);
+    }
+    throw new BadRequestException('Stage is required');
   }
 
   private async seedDevelopmentStages(projectId: string) {
@@ -502,6 +536,8 @@ export class ProjectsService {
     const saved = await this.projectsRepo.save(project);
     if (tax.strategy === 'DEVELOPMENT') {
       await this.seedDevelopmentStages(String(saved.id));
+    } else if (tax.strategy === 'DIRECT_SALE') {
+      await this.ensureDirectSaleDefaultStage(String(saved.id));
     }
     return this.findOne(String(saved.id));
   }

@@ -4,6 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 import { Expense } from './entities/expense.entity';
 import { ExpensePayment } from './entities/expense-payment.entity';
 import { AccountingService } from '../accounting/accounting.service';
+import { ProjectsService } from '../projects/projects.service';
 
 @Injectable()
 export class ExpensesService {
@@ -14,6 +15,7 @@ export class ExpensesService {
     private readonly payRepo: Repository<ExpensePayment>,
     private readonly dataSource: DataSource,
     private readonly accounting: AccountingService,
+    private readonly projects: ProjectsService,
   ) {}
 
   findAll(filters: {
@@ -46,12 +48,16 @@ export class ExpensesService {
   }
 
   async create(dto: Partial<Expense>, userId?: string) {
-    const required = ['project_id', 'project_stage_id', 'category', 'vendor_type', 'expense_date', 'amount'];
+    const required = ['project_id', 'category', 'vendor_type', 'expense_date', 'amount'];
     for (const field of required) {
       if (!dto[field as keyof Expense]) {
         throw new BadRequestException(`Field '${field}' is required for every expense`);
       }
     }
+    const project_stage_id = await this.projects.resolveExpenseStageId(
+      String(dto.project_id),
+      dto.project_stage_id ? String(dto.project_stage_id) : null,
+    );
     const entry_mode = this.resolveEntryMode(dto);
     let payment_type = dto.payment_type || (entry_mode === 'BILL' ? 'Credit' : 'Cash');
     if (entry_mode === 'BILL') payment_type = 'Credit';
@@ -75,6 +81,7 @@ export class ExpensesService {
       const expense = await manager.getRepository(Expense).save(
         manager.getRepository(Expense).create({
           ...dto,
+          project_stage_id,
           entry_mode,
           payment_type,
           bank_account_id: entry_mode === 'BILL' ? null : dto.bank_account_id || null,
@@ -218,12 +225,13 @@ export class ExpensesService {
         dto.project_id !== undefined && dto.project_id
           ? String(dto.project_id)
           : expense.project_id;
-      const project_stage_id =
+      const project_stage_id = await this.projects.resolveExpenseStageId(
+        project_id,
         dto.project_stage_id !== undefined && dto.project_stage_id
           ? String(dto.project_stage_id)
-          : expense.project_stage_id;
+          : expense.project_stage_id,
+      );
       if (!project_id) throw new BadRequestException('Project is required');
-      if (!project_stage_id) throw new BadRequestException('Stage is required');
 
       await repo.update(id, {
         project_id,

@@ -6,12 +6,14 @@ import { ExpensesService } from './expenses.service';
 import { ExpensesController } from './expenses.controller';
 import { AccountingModule } from '../accounting/accounting.module';
 import { AuthModule } from '../auth/auth.module';
+import { ProjectsModule } from '../projects/projects.module';
 
 @Module({
   imports: [
     AuthModule,
     TypeOrmModule.forFeature([Expense, ExpensePayment]),
     AccountingModule,
+    ProjectsModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

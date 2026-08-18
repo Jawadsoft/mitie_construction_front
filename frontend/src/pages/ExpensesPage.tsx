@@ -3,7 +3,7 @@ import {
   getExpenses, createExpense, updateExpense, deleteExpense, payExpenseBill,
 } from '../api/expenses';
 import type { Expense } from '../api/expenses';
-import { getProjects } from '../api/projects';
+import { getProjects, normalizeProjectFields } from '../api/projects';
 import type { Project } from '../api/projects';
 import { getSuppliers } from '../api/suppliers';
 import type { Supplier } from '../api/suppliers';
@@ -114,6 +114,10 @@ export default function ExpensesPage() {
   const [payBaseline, setPayBaseline] = useState(emptyPayForm);
   const [stages, setStages] = useState<{ id: string; name: string }[]>([]);
   const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
+  const selectedProject = projects.find((p) => p.id === form.project_id);
+  const isDirectSale = selectedProject
+    ? normalizeProjectFields(selectedProject).project_strategy === 'DIRECT_SALE'
+    : false;
 
   const createDirty = !editing && isFormDirty(form, emptyForm);
   const { draftSaved, clear: clearDraft } = useFormDraft({
@@ -195,6 +199,7 @@ export default function ExpensesPage() {
     try {
       const payload = {
         ...form,
+        project_stage_id: form.project_stage_id || undefined,
         payment_type: form.entry_mode === 'BILL' ? 'Credit' : form.payment_type,
         due_date: form.entry_mode === 'BILL' ? (form.due_date || form.expense_date) : null,
         bank_account_id:
@@ -532,7 +537,7 @@ export default function ExpensesPage() {
                 </p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className={`grid gap-3 ${isDirectSale ? 'grid-cols-1' : 'grid-cols-2'}`}>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Project *</label>
                 <select value={form.project_id} onChange={(e) => setForm((f) => ({ ...f, project_id: e.target.value, project_stage_id: '' }))}
@@ -541,6 +546,7 @@ export default function ExpensesPage() {
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+              {!isDirectSale && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Stage *</label>
                 <select value={form.project_stage_id} onChange={(e) => setForm((f) => ({ ...f, project_stage_id: e.target.value }))}
@@ -549,6 +555,7 @@ export default function ExpensesPage() {
                   {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
