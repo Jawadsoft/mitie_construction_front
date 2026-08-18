@@ -2,14 +2,42 @@ import { useEffect, useState } from 'react';
 import Modal from './Modal';
 import { formatDate } from '../utils/date';
 import type { Project } from '../api/projects';
-import { getExpenses } from '../api/expenses';
-import type { Expense } from '../api/expenses';
+import { getExpenses, getExpensePayments } from '../api/expenses';
+import type { Expense, ExpensePayment } from '../api/expenses';
 import { getPayments } from '../api/labour';
 import type { LabourPayment } from '../api/labour';
 import { getIssues } from '../api/inventory';
 import type { MaterialIssue } from '../api/inventory';
 import { getSales, getSale } from '../api/sales';
 import type { Sale, SaleInstallment } from '../api/sales';
+import { getBankAccounts } from '../api/accounting';
+import type { BankAccount } from '../api/accounting';
+
+type CashOutRow = {
+  id: string;
+  date: string;
+  source: string;
+  kind: string;
+  detail: string;
+  amount: number;
+};
+
+function cashSource(
+  method?: string | null,
+  bankId?: string | null,
+  banks: BankAccount[] = [],
+) {
+  if (bankId) {
+    const bank = banks.find((b) => b.id === bankId);
+    const name = bank ? [bank.name, bank.bank_name].filter(Boolean).join(' · ') : 'Bank';
+    return `Bank · ${name}`;
+  }
+  const m = (method || 'Cash').toLowerCase();
+  if (m.includes('bank') || m.includes('transfer') || m.includes('cheque') || m === 'bank') {
+    return 'Bank';
+  }
+  return 'Cash';
+}
 
 export type FigureKind =
   | 'budget'
@@ -54,6 +82,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
   const [collections, setCollections] = useState<
     Array<SaleInstallment & { sale_label: string; customer?: string }>
   >([]);
+  const [cashOut, setCashOut] = useState<CashOutRow[]>([]);
 
   const title =
     kind === 'profit'
@@ -69,15 +98,67 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
       setError('');
       try {
         if (kind === 'accrued' || kind === 'paid' || kind === 'profit' || kind === 'balance' || kind === 'payable_balance') {
-          const [ex, lp, mi] = await Promise.all([
+          const [ex, lp, mi, banks] = await Promise.all([
             getExpenses({ project_id: project.id }),
             getPayments(project.id),
             getIssues({ project_id: project.id }),
+            kind === 'paid' ? getBankAccounts() : Promise.resolve([] as BankAccount[]),
           ]);
           if (cancelled) return;
           setExpenses(ex);
           setLabour(lp);
           setIssues(mi);
+
+          if (kind === 'paid') {
+            const billPays = await Promise.all(
+              ex
+                .filter((e) => e.entry_mode === 'BILL' && Number(e.paid_amount) > 0.009)
+                .map(async (e) => {
+                  const pays = await getExpensePayments(e.id);
+                  return pays.map((p) => ({ expense: e, payment: p }));
+                }),
+            );
+            if (cancelled) return;
+            const rows: CashOutRow[] = [];
+            for (const e of ex) {
+              if (e.entry_mode === 'DIRECT' && Number(e.paid_amount) > 0.009) {
+                rows.push({
+                  id: `exp-${e.id}`,
+                  date: e.expense_date,
+                  source: cashSource(e.payment_type, e.bank_account_id, banks),
+                  kind: 'Direct',
+                  detail: e.category + (e.description ? ` · ${e.description}` : ''),
+                  amount: Number(e.paid_amount),
+                });
+              }
+            }
+            for (const group of billPays) {
+              for (const { expense, payment } of group) {
+                rows.push({
+                  id: `pmt-${payment.id}`,
+                  date: payment.paid_date,
+                  source: cashSource(payment.payment_method, payment.bank_account_id, banks),
+                  kind: 'Bill payment',
+                  detail: expense.category + (expense.description ? ` · ${expense.description}` : ''),
+                  amount: Number(payment.amount),
+                });
+              }
+            }
+            for (const p of lp) {
+              rows.push({
+                id: `lab-${p.id}`,
+                date: p.payment_date,
+                source: cashSource(p.payment_method, p.bank_account_id, banks),
+                kind: 'Labour',
+                detail: p.contractor?.name ?? 'Labour',
+                amount: Number(p.amount),
+              });
+            }
+            rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+            setCashOut(rows);
+          } else {
+            setCashOut([]);
+          }
         }
         if (kind === 'sales' || kind === 'collected' || kind === 'profit' || kind === 'balance') {
           const list = await getSales(project.id);
@@ -172,35 +253,25 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
               </div>
             )}
 
-            {(kind === 'accrued' || kind === 'paid') && (
+            {kind === 'accrued' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                   <div className="bg-slate-50 rounded-lg p-3">
-                    <p className="text-xs text-slate-400">
-                      {kind === 'accrued' ? 'Expenses (full)' : 'Expenses paid'}
-                    </p>
-                    <p className="font-semibold text-red-600">
-                      {money(kind === 'accrued' ? accruedExpense : paidExpense)}
-                    </p>
+                    <p className="text-xs text-slate-400">Expenses (full)</p>
+                    <p className="font-semibold text-red-600">{money(accruedExpense)}</p>
                   </div>
                   <div className="bg-slate-50 rounded-lg p-3">
                     <p className="text-xs text-slate-400">Labour</p>
                     <p className="font-semibold text-red-600">{money(labourTotal)}</p>
                   </div>
-                  {kind === 'accrued' && (
-                    <div className="bg-slate-50 rounded-lg p-3">
-                      <p className="text-xs text-slate-400">Material issues</p>
-                      <p className="font-semibold text-slate-700">{money(materialTotal)}</p>
-                    </div>
-                  )}
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Material issues</p>
+                    <p className="font-semibold text-slate-700">{money(materialTotal)}</p>
+                  </div>
                   <div className="bg-red-50 rounded-lg p-3">
                     <p className="text-xs text-slate-400">Total</p>
                     <p className="font-semibold text-red-700">
-                      {money(
-                        kind === 'accrued'
-                          ? accruedExpense + labourTotal + materialTotal
-                          : paidExpense + labourTotal,
-                      )}
+                      {money(accruedExpense + labourTotal + materialTotal)}
                     </p>
                   </div>
                 </div>
@@ -277,7 +348,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                   </>
                 )}
 
-                {kind === 'accrued' && issues.length > 0 && (
+                {issues.length > 0 && (
                   <>
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                       Material issues
@@ -306,12 +377,73 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
                     </div>
                   </>
                 )}
+              </div>
+            )}
 
-                {kind === 'paid' && (
-                  <p className="text-xs text-slate-500">
-                    Actual Paid excludes unpaid bill balances (uses expense paid amounts only).
-                  </p>
-                )}
+            {kind === 'paid' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Cash</p>
+                    <p className="font-semibold text-red-600">
+                      {money(cashOut.filter((r) => r.source === 'Cash').reduce((s, r) => s + r.amount, 0))}
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-400">Bank</p>
+                    <p className="font-semibold text-red-600">
+                      {money(cashOut.filter((r) => r.source !== 'Cash').reduce((s, r) => s + r.amount, 0))}
+                    </p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-3 col-span-2">
+                    <p className="text-xs text-slate-400">Total cash &amp; bank paid</p>
+                    <p className="font-semibold text-red-700">
+                      {money(cashOut.reduce((s, r) => s + r.amount, 0))}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Payments from cash / bank
+                </p>
+                <div className="border rounded-lg overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-gray-600">Date</th>
+                        <th className="px-3 py-2 text-left text-gray-600">Paid from</th>
+                        <th className="px-3 py-2 text-left text-gray-600">Type</th>
+                        <th className="px-3 py-2 text-left text-gray-600">Detail</th>
+                        <th className="px-3 py-2 text-right text-gray-600">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cashOut.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-6 text-center text-slate-400">
+                            No cash or bank payments yet
+                          </td>
+                        </tr>
+                      ) : (
+                        cashOut.map((r) => (
+                          <tr key={r.id} className="border-t">
+                            <td className="px-3 py-2">{formatDate(r.date)}</td>
+                            <td className="px-3 py-2 text-xs">{r.source}</td>
+                            <td className="px-3 py-2 text-xs">{r.kind}</td>
+                            <td className="px-3 py-2">{r.detail}</td>
+                            <td className="px-3 py-2 text-right font-mono text-red-600">
+                              {r.amount.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Cash and cash equivalents only: direct payments, bill payments, and labour paid from cash or bank.
+                  Unpaid accrual bills are excluded.
+                </p>
               </div>
             )}
 
