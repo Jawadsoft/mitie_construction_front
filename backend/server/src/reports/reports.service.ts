@@ -319,7 +319,7 @@ export class ReportsService {
       SELECT
         e.id::text AS expense_id,
         e.project_id::text AS project_id,
-        p.name AS project_name,
+        COALESCE(p.name, 'Overhead') AS project_name,
         e.vendor_type,
         CASE
           WHEN e.vendor_type = 'SUPPLIER' AND s.id IS NOT NULL THEN s.id::text
@@ -341,7 +341,7 @@ export class ReportsService {
         CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS paid_amount,
         CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS balance_due
       FROM expenses e
-      JOIN projects p ON p.id = e.project_id
+      LEFT JOIN projects p ON p.id = e.project_id
       LEFT JOIN suppliers s ON s.id = e.supplier_id
       LEFT JOIN labour_contractors lc ON lc.id = e.contractor_id
       WHERE e.entry_mode = 'BILL'
@@ -735,7 +735,7 @@ export class ReportsService {
       SELECT
         e.id::text AS expense_id,
         e.project_id::text AS project_id,
-        p.name AS project_name,
+        COALESCE(p.name, 'Overhead') AS project_name,
         CASE
           WHEN e.vendor_type = 'SUPPLIER' AND s.name IS NOT NULL THEN s.name
           WHEN e.vendor_type = 'LABOUR' AND lc.name IS NOT NULL THEN lc.name
@@ -746,7 +746,7 @@ export class ReportsService {
         e.due_date::text AS due_date,
         CAST(e.amount AS NUMERIC) - CAST(COALESCE(e.paid_amount, 0) AS NUMERIC) AS amount
       FROM expenses e
-      JOIN projects p ON p.id = e.project_id
+      LEFT JOIN projects p ON p.id = e.project_id
       LEFT JOIN suppliers s ON s.id = e.supplier_id
       LEFT JOIN labour_contractors lc ON lc.id = e.contractor_id
       WHERE ${payableWhere.join(' AND ')}

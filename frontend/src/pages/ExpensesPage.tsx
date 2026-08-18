@@ -121,6 +121,7 @@ export default function ExpensesPage() {
   const isDirectSale = selectedProject
     ? normalizeProjectFields(selectedProject).project_strategy === 'DIRECT_SALE'
     : false;
+  const hideStage = !form.project_id || isDirectSale;
 
   const createDirty = !editing && isFormDirty(form, emptyForm);
   const { draftSaved, clear: clearDraft } = useFormDraft({
@@ -231,7 +232,8 @@ export default function ExpensesPage() {
     try {
       const payload = {
         ...form,
-        project_stage_id: form.project_stage_id || undefined,
+        project_id: form.project_id || null,
+        project_stage_id: form.project_id ? form.project_stage_id || undefined : null,
         payment_type: form.entry_mode === 'BILL' ? 'Credit' : form.payment_type,
         due_date: form.entry_mode === 'BILL' ? (form.due_date || form.expense_date) : null,
         bank_account_id:
@@ -256,8 +258,8 @@ export default function ExpensesPage() {
         const tempId = `temp-${Date.now()}`;
         const optimistic: Expense = {
           id: tempId,
-          project_id: form.project_id,
-          project_stage_id: form.project_stage_id,
+          project_id: form.project_id || null,
+          project_stage_id: form.project_id ? form.project_stage_id || null : null,
           category: form.category,
           vendor_type: form.vendor_type as Expense['vendor_type'],
           supplier_id: payload.supplier_id ?? null,
@@ -600,16 +602,17 @@ export default function ExpensesPage() {
                 </p>
               </div>
             )}
-            <div className={`grid gap-3 ${isDirectSale ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            <div className={`grid gap-3 ${hideStage ? 'grid-cols-1' : 'grid-cols-2'}`}>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Project *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
                 <select value={form.project_id} onChange={(e) => setForm((f) => ({ ...f, project_id: e.target.value, project_stage_id: '' }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                  <option value="">-- Select --</option>
+                  <option value="">Overhead / no project</option>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+                <p className="text-[11px] text-slate-400 mt-1">Leave as overhead for office, admin, or other costs not tied to a project or JV.</p>
               </div>
-              {!isDirectSale && (
+              {!hideStage && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Stage *</label>
                 <select value={form.project_stage_id} onChange={(e) => setForm((f) => ({ ...f, project_stage_id: e.target.value }))}
@@ -869,8 +872,17 @@ export default function ExpensesPage() {
             <DrawerField label="Description" value={drawerExpense.description} />
             <DrawerField label="Vendor Type" value={drawerExpense.vendor_type} />
             <DrawerSection title="Project Allocation" />
-            <DrawerField label="Project ID" value={drawerExpense.project_id} />
-            <DrawerField label="Stage ID" value={drawerExpense.project_stage_id} />
+            <DrawerField
+              label="Project"
+              value={
+                drawerExpense.project_id
+                  ? (projects.find((p) => p.id === drawerExpense.project_id)?.name || drawerExpense.project_id)
+                  : 'Overhead / no project'
+              }
+            />
+            {drawerExpense.project_stage_id && (
+              <DrawerField label="Stage ID" value={drawerExpense.project_stage_id} />
+            )}
             {(drawerExpense as Expense & { created_by?: string }).created_by && (
               <DrawerField label="Created By" value={(drawerExpense as Expense & { created_by?: string }).created_by} />
             )}

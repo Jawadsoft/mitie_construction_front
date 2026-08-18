@@ -2,8 +2,8 @@ import { getAuthHeaders, API_BASE } from './client';
 
 export interface Expense {
   id: string;
-  project_id: string;
-  project_stage_id: string;
+  project_id: string | null;
+  project_stage_id: string | null;
   category: string;
   vendor_type: string;
   supplier_id: string | null;

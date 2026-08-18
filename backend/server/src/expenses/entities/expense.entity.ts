@@ -5,11 +5,12 @@ export class Expense {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: string;
 
-  @Column({ type: 'bigint', unsigned: true })
-  project_id: string;
+  /** Null = company overhead / not allocated to a project or JV. */
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  project_id: string | null;
 
-  @Column({ type: 'bigint', unsigned: true })
-  project_stage_id: string;
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  project_stage_id: string | null;
 
   @Column({ type: 'varchar', length: 100 })
   category: string;
