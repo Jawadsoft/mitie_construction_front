@@ -96,6 +96,7 @@ export default function ProjectFigureDetail({ project, kind, onClose }: Props) {
     (async () => {
       setLoading(true);
       setError('');
+      
       try {
         if (kind === 'accrued' || kind === 'paid' || kind === 'profit' || kind === 'balance' || kind === 'payable_balance') {
           const [ex, lp, mi, banks] = await Promise.all([
