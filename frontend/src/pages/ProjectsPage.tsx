@@ -1004,6 +1004,14 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                     Collection
                   </button>
 
+                  <button
+                    type="button"
+                    className="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700"
+                    onClick={() => setQuickEntry({ project: p, kind: 'bill-payment' })}
+                  >
+                    Pay Bill
+                  </button>
+
                   {/* More Actions dropdown */}
                   <div className="relative">
                     <button
@@ -1027,13 +1035,6 @@ export default function ProjectsPage({ onSelectProject, onQuickAction }: Props) 
                           onClick={() => { setOpenDropdownId(null); setQuickEntry({ project: p, kind: 'expense' }); }}
                         >
                           Expense
-                        </button>
-                        <button
-                          type="button"
-                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => { setOpenDropdownId(null); setQuickEntry({ project: p, kind: 'payment' }); }}
-                        >
-                          Payment
                         </button>
                         <button
                           type="button"

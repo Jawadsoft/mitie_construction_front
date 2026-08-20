@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import { getCashTransactions, createCashTransaction } from '../api/cashflow';
+import { getCashTransactions } from '../api/cashflow';
 import type { CashTransaction } from '../api/cashflow';
 import { getCashflowReport } from '../api/reports';
 import type { CashflowActivitySection, CashflowReport } from '../api/reports';
 import { getProjects } from '../api/projects';
 import type { Project } from '../api/projects';
-import Modal from '../components/Modal';
 import StatCard from '../components/StatCard';
 import { formatDate } from '../utils/date';
 import { formatPkrFull, formatPkrThousands } from '../utils/money';
@@ -92,7 +91,7 @@ function ActivitySection({
 
 const TABS = [
   { id: 'statement' as const, label: 'Statement' },
-  { id: 'transactions' as const, label: 'Transactions' },
+  { id: 'transactions' as const, label: 'Cash book' },
 ];
 
 export default function CashflowPage() {
@@ -102,19 +101,12 @@ export default function CashflowPage() {
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [statement, setStatement] = useState<CashflowReport | null>(null);
-  const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterProject, setFilterProject] = useState('');
   const [dateFrom, setDateFrom] = useState(monthStart);
   const [dateTo, setDateTo] = useState(today);
-
-  const [form, setForm] = useState({
-    transaction_date: new Date().toISOString().split('T')[0],
-    type: 'IN' as 'IN' | 'OUT',
-    amount: '', method: 'Cash', reference_no: '', description: '', project_id: '',
-  });
 
   const load = async () => {
     setLoading(true);
@@ -143,35 +135,13 @@ export default function CashflowPage() {
 
   useEffect(() => { load(); }, [filterType, filterProject, dateFrom, dateTo]);
 
-  const handleSave = async () => {
-    if (!form.amount || !form.transaction_date) { setError('Date and amount are required'); return; }
-    setError('');
-    try {
-      await createCashTransaction({
-        ...form,
-        project_id: form.project_id || undefined,
-      } as any);
-      setShowModal(false);
-      setTab('transactions');
-      load();
-    } catch (e: any) { setError(e.message); }
-  };
-
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Cash Flow</h1>
-          <p className="text-sm text-gray-500">
-            Direct-method statement and cash transaction ledger
-          </p>
-        </div>
-        {tab === 'transactions' && (
-          <button onClick={() => { setError(''); setShowModal(true); }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-            + Add Transaction
-          </button>
-        )}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-800">Cash Flow</h1>
+        <p className="text-sm text-gray-500">
+          Cash book from posted journals — view only. Record money in Expenses, Sales, Funds, or Accounting → Transfer.
+        </p>
       </div>
 
       <div className="flex gap-1 border-b overflow-x-auto pb-px">
@@ -220,14 +190,14 @@ export default function CashflowPage() {
         {tab === 'transactions' && (
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">All ledger transactions</option>
+            <option value="">All movements</option>
             <option value="IN">Receipts only</option>
             <option value="OUT">Payments only</option>
           </select>
         )}
       </div>
 
-      {error && !showModal && (
+      {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-lg">
           {error}
         </p>
@@ -436,8 +406,10 @@ export default function CashflowPage() {
         ) : (
           <div className="bg-white rounded-xl border overflow-hidden">
             <div className="px-4 py-3 border-b bg-slate-50">
-              <h2 className="font-semibold text-slate-800">Cash Transaction Ledger</h2>
-              <p className="text-xs text-slate-500">Supporting detail for actual cash receipts and payments.</p>
+              <h2 className="font-semibold text-slate-800">Cash book (from journals)</h2>
+              <p className="text-xs text-slate-500">
+                Read-only movements on Cash &amp; Bank. To pay a bill use Expenses; to move cash↔bank use Accounting → Transfer.
+              </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -453,7 +425,7 @@ export default function CashflowPage() {
                 </thead>
                 <tbody>
                   {transactions.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center text-gray-400 py-8">No transactions yet.</td></tr>
+                    <tr><td colSpan={6} className="text-center text-gray-400 py-8">No cash movements in this period.</td></tr>
                   ) : transactions.map(t => (
                     <tr key={t.id} className="border-t hover:bg-gray-50">
                       <td className="px-4 py-3">{formatDate(t.transaction_date)}</td>
@@ -475,62 +447,6 @@ export default function CashflowPage() {
             </div>
           </div>
         )
-      )}
-
-      {showModal && (
-        <Modal title="Add Transaction" onClose={() => setShowModal(false)}>
-          <div className="space-y-3">
-            {error && <p className="text-red-600 text-sm">{error}</p>}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-                <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'IN' | 'OUT' }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                  <option value="IN">Cash In</option>
-                  <option value="OUT">Cash Out</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-                <input type="date" value={form.transaction_date} onChange={e => setForm(f => ({ ...f, transaction_date: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
-                <input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
-                <select value={form.method} onChange={e => setForm(f => ({ ...f, method: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                  {['Cash', 'Bank Transfer', 'Cheque'].map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reference No</label>
-              <input value={form.reference_no} onChange={e => setForm(f => ({ ...f, reference_no: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Project (optional)</label>
-              <select value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                <option value="">-- None --</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-            <button onClick={handleSave} className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700">Add Transaction</button>
-          </div>
-        </Modal>
       )}
     </div>
   );

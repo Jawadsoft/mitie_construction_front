@@ -38,6 +38,14 @@ export class AccountingController {
     return this.svc.createJournalEntry(dto);
   }
 
+  /** Cash ↔ bank transfer (posted journal under Cash & Bank). */
+  @Post('transfers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(...WRITE_ROLES)
+  createCashBankTransfer(@Body() dto: any) {
+    return this.svc.createCashBankTransfer(dto);
+  }
+
   @Post('journal/purge-orphans')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(...WRITE_ROLES)

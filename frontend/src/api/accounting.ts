@@ -180,6 +180,26 @@ export async function createJournalEntry(dto: { entry: Partial<JournalEntry>; li
   return data;
 }
 
+/** Move money between Cash on hand and/or bank accounts (null bank id = cash till). */
+export async function createCashBankTransfer(dto: {
+  transfer_date: string;
+  amount: string | number;
+  from_bank_account_id?: string | null;
+  to_bank_account_id?: string | null;
+  reference_no?: string | null;
+  description?: string | null;
+  project_id?: string | null;
+}): Promise<JournalEntry> {
+  const res = await fetch(`${BASE}/transfers`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(dto),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || 'Failed to create transfer');
+  return data;
+}
+
 export async function postJournalEntry(id: string): Promise<JournalEntry> {
   const res = await fetch(`${BASE}/journal/${id}/post`, { method: 'POST', headers: getAuthHeaders() });
   const data = await res.json();

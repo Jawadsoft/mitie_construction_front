@@ -10,6 +10,7 @@ import {
   postJournalEntry,
   deleteJournalEntry,
   purgeOrphanJournals,
+  createCashBankTransfer,
   getTrialBalance,
   getGeneralLedger,
   getBalanceSheet,
@@ -79,6 +80,7 @@ export default function AccountingPage() {
   const [showBankModal, setShowBankModal] = useState(false);
   const [showEditBankModal, setShowEditBankModal] = useState(false);
   const [showStmtModal, setShowStmtModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -87,6 +89,14 @@ export default function AccountingPage() {
     reference_no: '',
     description: '',
     status: 'Draft',
+  });
+  const [transferForm, setTransferForm] = useState({
+    transfer_date: new Date().toISOString().split('T')[0],
+    amount: '',
+    from_bank_account_id: '',
+    to_bank_account_id: '',
+    reference_no: '',
+    description: '',
   });
   const [lines, setLines] = useState<Partial<JournalEntryLine>[]>([
     { account_id: '', dr_cr: 'DEBIT', amount: '', narration: '' },
@@ -214,6 +224,52 @@ export default function AccountingPage() {
     ]);
     setError('');
     setShowModal(true);
+  };
+
+  const openTransfer = () => {
+    const cashId =
+      bankAccounts.find((b) => {
+        const n = `${b.name} ${b.bank_name ?? ''} ${b.account_name ?? ''}`.toLowerCase();
+        return n.includes('cash in hand') || n.includes('cash on hand');
+      })?.id ?? '';
+    const otherBank = bankAccounts.find((b) => b.id !== cashId)?.id ?? '';
+    setTransferForm({
+      transfer_date: new Date().toISOString().split('T')[0],
+      amount: '',
+      from_bank_account_id: cashId,
+      to_bank_account_id: otherBank,
+      reference_no: '',
+      description: '',
+    });
+    setError('');
+    setShowTransferModal(true);
+  };
+
+  const handleSaveTransfer = async () => {
+    if (!transferForm.amount || Number(transferForm.amount) <= 0) {
+      setError('Enter a positive amount');
+      return;
+    }
+    if (transferForm.from_bank_account_id === transferForm.to_bank_account_id) {
+      setError('From and To must be different');
+      return;
+    }
+    setError('');
+    try {
+      await createCashBankTransfer({
+        transfer_date: transferForm.transfer_date,
+        amount: transferForm.amount,
+        from_bank_account_id: transferForm.from_bank_account_id || null,
+        to_bank_account_id: transferForm.to_bank_account_id || null,
+        reference_no: transferForm.reference_no || null,
+        description: transferForm.description || null,
+      });
+      notify.success('Transfer posted');
+      setShowTransferModal(false);
+      await load();
+    } catch (e: unknown) {
+      setError(notifyError(e, 'Transfer failed'));
+    }
   };
 
   const updateLine = (idx: number, field: keyof JournalEntryLine, value: string) => {
@@ -546,9 +602,20 @@ export default function AccountingPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Accounting</h1>
-          <p className="text-sm text-gray-500">COA, journals, GL, balance sheet, bank reconciliation</p>
+          <p className="text-sm text-gray-500">
+            COA, journals, transfers, GL, balance sheet, bank reconciliation
+          </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {tab === 'journal' && (
+            <button
+              type="button"
+              onClick={openTransfer}
+              className="border border-blue-600 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-50"
+            >
+              Transfer cash/bank
+            </button>
+          )}
           {tab !== 'bank-recon' || selectedBankId ? (
             <>
               <button
@@ -591,7 +658,7 @@ export default function AccountingPage() {
               >
                 Clean orphan JEs
               </button>
-              <button onClick={openNewEntry} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ Journal Entry</button>
+              <button onClick={openNewEntry} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">+ Journal (correction)</button>
             </div>
           )}
           {tab === 'accounts' && (
@@ -1201,7 +1268,7 @@ export default function AccountingPage() {
 
       {showModal && (
         <Modal
-          title={editingEntryId ? `Edit Journal JE-${editingEntryId}` : 'New Journal Entry'}
+          title={editingEntryId ? `Edit Journal JE-${editingEntryId}` : 'Journal correction / adjustment'}
           onClose={() => {
             setShowModal(false);
             setEditingEntryId(null);
@@ -1209,6 +1276,9 @@ export default function AccountingPage() {
         >
           <div className="space-y-3">
             {error && <p className="text-red-600 text-sm">{error}</p>}
+            <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Use for corrections and reclassifications. Day-to-day money: Expenses, Sales, Funds, or Transfer cash/bank.
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <input type="date" value={entryForm.entry_date} onChange={(e) => setEntryForm((f) => ({ ...f, entry_date: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm" />
               <input placeholder="Reference" value={entryForm.reference_no} onChange={(e) => setEntryForm((f) => ({ ...f, reference_no: e.target.value }))} className="border rounded-lg px-3 py-2 text-sm" />
@@ -1233,6 +1303,95 @@ export default function AccountingPage() {
             <p className={`text-xs ${isBalanced ? 'text-green-700' : 'text-red-600'}`}>Debit {totalDebit.toLocaleString()} / Credit {totalCredit.toLocaleString()}</p>
             <button onClick={handleSaveEntry} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">
               {editingEntryId ? 'Save changes' : 'Save Draft'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showTransferModal && (
+        <Modal title="Transfer cash / bank" onClose={() => setShowTransferModal(false)}>
+          <div className="space-y-3">
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+            <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Moves money between Cash on hand and bank accounts. Does not create expense or income.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <input
+                type="date"
+                value={transferForm.transfer_date}
+                onChange={(e) => setTransferForm((f) => ({ ...f, transfer_date: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">From *</label>
+                <select
+                  value={transferForm.from_bank_account_id}
+                  onChange={(e) => setTransferForm((f) => ({ ...f, from_bank_account_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Cash on hand</option>
+                  {bankAccounts.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {[b.name, b.bank_name].filter(Boolean).join(' · ')}
+                      {b.account_code ? ` (${b.account_code})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">To *</label>
+                <select
+                  value={transferForm.to_bank_account_id}
+                  onChange={(e) => setTransferForm((f) => ({ ...f, to_bank_account_id: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Cash on hand</option>
+                  {bankAccounts.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {[b.name, b.bank_name].filter(Boolean).join(' · ')}
+                      {b.account_code ? ` (${b.account_code})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (PKR) *</label>
+              <input
+                type="number"
+                value={transferForm.amount}
+                onChange={(e) => setTransferForm((f) => ({ ...f, amount: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                placeholder="e.g. 50000"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+              <input
+                value={transferForm.reference_no}
+                onChange={(e) => setTransferForm((f) => ({ ...f, reference_no: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="Optional"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+              <input
+                value={transferForm.description}
+                onChange={(e) => setTransferForm((f) => ({ ...f, description: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                placeholder="Optional"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveTransfer}
+              className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              Post transfer
             </button>
           </div>
         </Modal>

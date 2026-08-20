@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
 import ModalFormFooter from './ModalFormFooter';
-import { createExpense } from '../api/expenses';
-import { createCashTransaction } from '../api/cashflow';
+import { createExpense, getExpenses, payExpenseBill } from '../api/expenses';
+import type { Expense } from '../api/expenses';
 import { collectSalePayment, getSale, getSales, recordPayment } from '../api/sales';
 import type { Sale, SaleInstallment } from '../api/sales';
 import type { Project, Stage } from '../api/projects';
@@ -13,7 +13,7 @@ import { notify, notifyError } from '../utils/toast';
 import { isFormDirty } from '../hooks/useDirtyForm';
 import { useRegisterUnsaved } from './ConfirmDialog';
 
-export type QuickEntryKind = 'expense' | 'collection' | 'payment';
+export type QuickEntryKind = 'expense' | 'collection' | 'bill-payment';
 type CollectionMode = 'installment' | 'full';
 
 interface Props {
@@ -26,7 +26,6 @@ interface Props {
 const CATEGORIES = [
   'Land Purchase',
   'Materials',
-  'Labour',
   'Equipment Rental',
   'Transport',
   'Utilities',
@@ -34,7 +33,6 @@ const CATEGORIES = [
   'Other',
 ];
 const PAYMENT_TYPES = ['Cash', 'Bank Transfer', 'Cheque'];
-const CASH_METHODS = ['Cash', 'Bank Transfer', 'Cheque'];
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -45,8 +43,21 @@ function needsBank(method: string) {
 function bankLabel(b: BankAccount) {
   const parts = [b.name];
   if (b.bank_name) parts.push(b.bank_name);
-  if (b.account_number) parts.push(`…${b.account_number.slice(-4)}`);
+  if (b.account_code) parts.push(`(${b.account_code})`);
+  else if (b.account_number) parts.push(`…${b.account_number.slice(-4)}`);
   return parts.join(' · ');
+}
+
+function cashTillId(banks: BankAccount[]) {
+  const hit = banks.find((b) => {
+    const n = `${b.name} ${b.bank_name ?? ''} ${b.account_name ?? ''}`.toLowerCase();
+    return n.includes('cash in hand') || n.includes('cash on hand');
+  });
+  return hit?.id ?? '';
+}
+
+function billBalance(e: Expense) {
+  return Math.round((Number(e.amount) - Number(e.paid_amount || 0)) * 100) / 100;
 }
 
 type PendingInstallment = SaleInstallment & {
@@ -59,6 +70,8 @@ type OpenSale = Sale & {
   balance: number;
 };
 
+type OpenBill = Expense & { balance: number };
+
 export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: Props) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -66,6 +79,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [pending, setPending] = useState<PendingInstallment[]>([]);
   const [openSales, setOpenSales] = useState<OpenSale[]>([]);
+  const [openBills, setOpenBills] = useState<OpenBill[]>([]);
   const [collectionMode, setCollectionMode] = useState<CollectionMode>('installment');
   const [loadingMeta, setLoadingMeta] = useState(true);
 
@@ -89,12 +103,13 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     bank_account_id: '',
   });
 
-  const [paymentForm, setPaymentForm] = useState({
-    transaction_date: today(),
+  const [billPayForm, setBillPayForm] = useState({
+    expense_id: '',
+    paid_date: today(),
     amount: '',
-    method: 'Cash',
-    description: '',
-    reference_no: '',
+    payment_method: 'Cash',
+    bank_account_id: '',
+    notes: '',
   });
 
   useEffect(() => {
@@ -112,7 +127,26 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
           setExpenseForm((f) => ({
             ...f,
             project_stage_id: list[0]?.id ?? '',
-            bank_account_id: bankList[0]?.id ?? '',
+            bank_account_id: cashTillId(bankList) || bankList[0]?.id || '',
+          }));
+        } else if (kind === 'bill-payment') {
+          const [expenses, bankList] = await Promise.all([
+            getExpenses({ project_id: project.id, entry_mode: 'BILL' }),
+            getBankAccounts(),
+          ]);
+          if (cancelled) return;
+          const unpaid = expenses
+            .filter((e) => e.status !== 'Paid' && billBalance(e) > 0.009)
+            .map((e) => ({ ...e, balance: billBalance(e) }))
+            .sort((a, b) => String(a.due_date || a.expense_date).localeCompare(String(b.due_date || b.expense_date)));
+          setOpenBills(unpaid);
+          setBanks(bankList);
+          const first = unpaid[0];
+          setBillPayForm((f) => ({
+            ...f,
+            expense_id: first?.id ?? '',
+            amount: first ? String(first.balance) : '',
+            bank_account_id: cashTillId(bankList) || bankList[0]?.id || '',
           }));
         } else if (kind === 'collection') {
           const [sales, bankList] = await Promise.all([getSales(project.id), getBankAccounts()]);
@@ -121,7 +155,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
           setBanks(bankList);
           setCollectionForm((f) => ({
             ...f,
-            bank_account_id: bankList[0]?.id ?? '',
+            bank_account_id: cashTillId(bankList) || bankList[0]?.id || '',
           }));
           const rows: PendingInstallment[] = [];
           const salesOpen: OpenSale[] = [];
@@ -179,11 +213,12 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
   const title =
     kind === 'expense'
       ? `Quick expense — ${project.name}`
-      : kind === 'collection'
-        ? `Quick collection — ${project.name}`
-        : `Quick payment — ${project.name}`;
+      : kind === 'bill-payment'
+        ? `Pay bill — ${project.name}`
+        : `Quick collection — ${project.name}`;
 
   const isDirectSale = normalizeProjectFields(project).project_strategy === 'DIRECT_SALE';
+  const selectedBill = openBills.find((b) => b.id === billPayForm.expense_id) ?? null;
 
   const handleSaveExpense = async () => {
     if (!isDirectSale && !expenseForm.project_stage_id) {
@@ -299,28 +334,39 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     }
   };
 
-  const handleSavePayment = async () => {
-    if (!paymentForm.amount) {
-      setError('Amount is required');
+  const handleSaveBillPayment = async () => {
+    if (!billPayForm.expense_id) {
+      setError('Select a bill to pay');
+      return;
+    }
+    const amount = Number(billPayForm.amount);
+    if (!(amount > 0)) {
+      setError('Enter a payment amount greater than 0');
+      return;
+    }
+    if (selectedBill && amount > selectedBill.balance + 0.009) {
+      setError(`Amount exceeds bill balance (${selectedBill.balance.toLocaleString()})`);
+      return;
+    }
+    if (needsBank(billPayForm.payment_method) && !billPayForm.bank_account_id) {
+      setError('Select a partner bank for Bank Transfer / Cheque');
       return;
     }
     setSaving(true);
     setError('');
     try {
-      await createCashTransaction({
-        type: 'OUT',
-        project_id: project.id,
-        transaction_date: paymentForm.transaction_date,
-        amount: paymentForm.amount,
-        method: paymentForm.method,
-        description: paymentForm.description || `Payment — ${project.name}`,
-        reference_no: paymentForm.reference_no || null,
+      await payExpenseBill(billPayForm.expense_id, {
+        amount: billPayForm.amount,
+        paid_date: billPayForm.paid_date,
+        payment_method: billPayForm.payment_method,
+        bank_account_id: billPayForm.bank_account_id || undefined,
+        notes: billPayForm.notes || undefined,
       });
-      notify.success('Payment saved');
+      notify.success('Bill payment recorded');
       onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(notifyError(e, 'Failed to save payment'));
+      setError(notifyError(e, 'Failed to record bill payment'));
     } finally {
       setSaving(false);
     }
@@ -362,7 +408,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
     }
   };
 
-  const snapshot = { expenseForm, collectionForm, paymentForm, collectionMode };
+  const snapshot = { expenseForm, collectionForm, billPayForm, collectionMode };
   const baselineRef = useRef<typeof snapshot | null>(null);
   if (!loadingMeta && baselineRef.current === null) {
     baselineRef.current = snapshot;
@@ -372,8 +418,8 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
 
   const runSave = async () => {
     if (kind === 'expense') await handleSaveExpense();
-    else if (kind === 'collection') await handleSaveCollection();
-    else await handleSavePayment();
+    else if (kind === 'bill-payment') await handleSaveBillPayment();
+    else await handleSaveCollection();
   };
 
   useRegisterUnsaved({
@@ -388,9 +434,18 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
       ? expenseForm.entry_mode === 'BILL'
         ? 'Record Bill'
         : 'Save Expense'
-      : kind === 'collection'
-        ? 'Save Collection'
-        : 'Save Payment';
+      : kind === 'bill-payment'
+        ? 'Record Payment'
+        : 'Save Collection';
+
+  const onBillChange = (id: string) => {
+    const bill = openBills.find((b) => b.id === id);
+    setBillPayForm((f) => ({
+      ...f,
+      expense_id: id,
+      amount: bill ? String(bill.balance) : f.amount,
+    }));
+  };
 
   return (
     <Modal
@@ -399,16 +454,18 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
       mode="form"
       isDirty={isDirty}
       footer={
-        <ModalFormFooter
-          onSave={() => void runSave()}
-          saveLabel={saveLabel}
-          saving={saving}
-          error={error ? <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p> : null}
-        />
+        kind === 'bill-payment' && !loadingMeta && openBills.length === 0 ? null : (
+          <ModalFormFooter
+            onSave={() => void runSave()}
+            saveLabel={saveLabel}
+            saving={saving}
+            error={error ? <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p> : null}
+          />
+        )
       }
     >
       <div className="space-y-3">
-        {loadingMeta && kind !== 'payment' ? (
+        {loadingMeta ? (
           <p className="text-sm text-slate-500 py-4 text-center">Loading…</p>
         ) : kind === 'expense' ? (
           <>
@@ -552,6 +609,99 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
                 placeholder="Optional"
               />
             </div>
+          </>
+        ) : kind === 'bill-payment' ? (
+          <>
+            {openBills.length === 0 ? (
+              <p className="text-sm text-slate-500 py-2">
+                No unpaid bills for this project. Record a bill under Expense (entry type: Record bill), then pay it here.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">
+                  Pays an open vendor bill for this project — reduces payable and Cash &amp; Bank.
+                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Bill *</label>
+                  <select
+                    value={billPayForm.expense_id}
+                    onChange={(e) => onBillChange(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    {openBills.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.category} · Due {b.due_date || b.expense_date} · Bal PKR {b.balance.toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedBill && (
+                  <p className="text-sm text-gray-600">
+                    Bill PKR {Number(selectedBill.amount).toLocaleString()} · Paid PKR{' '}
+                    {Number(selectedBill.paid_amount || 0).toLocaleString()} · Balance{' '}
+                    <span className="font-semibold text-amber-700">
+                      PKR {selectedBill.balance.toLocaleString()}
+                    </span>
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                    <input
+                      type="date"
+                      value={billPayForm.paid_date}
+                      onChange={(e) => setBillPayForm((f) => ({ ...f, paid_date: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+                    <input
+                      type="number"
+                      value={billPayForm.amount}
+                      onChange={(e) => setBillPayForm((f) => ({ ...f, amount: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment method</label>
+                  <select
+                    value={billPayForm.payment_method}
+                    onChange={(e) => setBillPayForm((f) => ({ ...f, payment_method: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    {PAYMENT_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Pay from (Cash &amp; Bank){needsBank(billPayForm.payment_method) ? ' *' : ''}
+                  </label>
+                  <select
+                    value={billPayForm.bank_account_id}
+                    onChange={(e) => setBillPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    {!cashTillId(banks) && <option value="">Cash on hand (1000)</option>}
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>{bankLabel(b)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                  <input
+                    value={billPayForm.notes}
+                    onChange={(e) => setBillPayForm((f) => ({ ...f, notes: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    placeholder="Optional"
+                  />
+                </div>
+              </>
+            )}
           </>
         ) : kind === 'collection' ? (
           <>
@@ -740,68 +890,7 @@ export default function ProjectQuickEntry({ project, kind, onClose, onSaved }: P
               </>
             )}
           </>
-        ) : (
-          <>
-            <p className="text-xs text-slate-500">Cash / bank payment out against this project (cashbook).</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-                <input
-                  type="date"
-                  value={paymentForm.transaction_date}
-                  onChange={(e) => setPaymentForm((f) => ({ ...f, transaction_date: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (PKR) *</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 25000"
-                  value={paymentForm.amount}
-                  onChange={(e) => setPaymentForm((f) => ({ ...f, amount: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
-              <select
-                value={paymentForm.method}
-                onChange={(e) => setPaymentForm((f) => ({ ...f, method: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              >
-                {CASH_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <input
-                value={paymentForm.description}
-                onChange={(e) => setPaymentForm((f) => ({ ...f, description: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-                placeholder="e.g. Vendor advance"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
-              <input
-                value={paymentForm.reference_no}
-                onChange={(e) => setPaymentForm((f) => ({ ...f, reference_no: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-                placeholder="Optional"
-              />
-            </div>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleSavePayment}
-              className="w-full bg-slate-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-900 disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Save Payment'}
-            </button>
-          </>
-        )}
+        ) : null}
       </div>
     </Modal>
   );

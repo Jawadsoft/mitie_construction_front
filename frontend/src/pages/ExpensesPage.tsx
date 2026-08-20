@@ -41,7 +41,6 @@ const EXPENSE_COL_IDS = EXPENSE_COLUMNS.map((c) => c.id);
 const CATEGORIES = [
   'Land Purchase',
   'Materials',
-  'Labour',
   'Equipment Rental',
   'Transport',
   'Utilities',
@@ -430,7 +429,7 @@ export default function ExpensesPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
           <p className="text-sm text-gray-500">
-            Total: PKR {totalExpenses.toLocaleString()}
+            Record project costs and bills here once — they post to the books automatically. Labour wages/advances go under Labour. Cash↔bank moves use Accounting → Transfer.
             {unpaidBalance > 0 && (
               <span className="text-amber-700"> · Unpaid bills: PKR {unpaidBalance.toLocaleString()}</span>
             )}
@@ -644,7 +643,11 @@ export default function ExpensesPage() {
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
                   <option value="">-- Select --</option>
                   {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {form.category === 'Labour' && <option value="Labour">Labour (legacy)</option>}
                 </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  For contractor labour use the Labour module so attendance and advances stay in sync.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Vendor Type *</label>

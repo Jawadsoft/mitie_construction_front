@@ -1095,6 +1095,73 @@ export class AccountingService implements OnModuleInit {
     return this.postJournalEntry(created.id, manager);
   }
 
+  /**
+   * Move cash between Cash on hand and/or bank accounts (Dr destination, Cr source).
+   * Does not affect P&L — internal transfer only. Uses null bank id for cash till.
+   */
+  async createCashBankTransfer(dto: {
+    transfer_date: string;
+    amount: string | number;
+    from_bank_account_id?: string | null;
+    to_bank_account_id?: string | null;
+    reference_no?: string | null;
+    description?: string | null;
+    project_id?: string | null;
+  }) {
+    const amountNum = Number(dto.amount);
+    if (!dto.transfer_date) throw new BadRequestException('transfer_date is required');
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+    const fromKey = dto.from_bank_account_id || null;
+    const toKey = dto.to_bank_account_id || null;
+    if (fromKey === toKey) {
+      throw new BadRequestException('From and To must be different cash/bank accounts');
+    }
+    const fromAccountId = await this.resolveBankAssetAccountId(fromKey);
+    const toAccountId = await this.resolveBankAssetAccountId(toKey);
+    if (fromAccountId === toAccountId) {
+      throw new BadRequestException('From and To resolve to the same ledger account');
+    }
+    const bankRepo = this.bankRepo;
+    const labelFor = async (bankId: string | null) => {
+      if (!bankId) return 'Cash on hand';
+      const b = await bankRepo.findOne({ where: { id: bankId } });
+      return b?.name || 'Bank';
+    };
+    const fromLabel = await labelFor(fromKey);
+    const toLabel = await labelFor(toKey);
+    const amount = amountNum.toFixed(2);
+    const desc =
+      dto.description?.trim() ||
+      `Transfer ${fromLabel} → ${toLabel}`;
+    const ref =
+      dto.reference_no?.trim() ||
+      `XFER-${Date.now().toString(36).toUpperCase()}`;
+    return this.createAndPostEntry({
+      entry: {
+        entry_date: dto.transfer_date,
+        reference_no: ref,
+        description: desc,
+        project_id: dto.project_id || null,
+      },
+      lines: [
+        {
+          account_id: toAccountId,
+          dr_cr: 'DEBIT',
+          amount,
+          narration: `Transfer in from ${fromLabel}`,
+        },
+        {
+          account_id: fromAccountId,
+          dr_cr: 'CREDIT',
+          amount,
+          narration: `Transfer out to ${toLabel}`,
+        },
+      ],
+    });
+  }
+
   async postExpenseJournal(expense: Expense, manager?: EntityManager) {
     const expenseAcc = await this.findAccountByCode(this.mapExpenseAccountCode(expense), manager);
     const amount = Number(expense.amount).toFixed(2);
