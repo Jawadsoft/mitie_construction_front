@@ -58,9 +58,18 @@ function needsBank(method: string) {
 
 function bankLabel(b: BankAccount) {
   const parts = [b.name];
-  if (b.bank_name) parts.push(b.bank_name);
-  if (b.account_number) parts.push(`…${b.account_number.slice(-4)}`);
+  if (b.bank_name && b.bank_name.toLowerCase() !== b.name.toLowerCase()) parts.push(b.bank_name);
+  if (b.account_code) parts.push(`(${b.account_code})`);
+  else if (b.account_number) parts.push(`…${b.account_number.slice(-4)}`);
   return parts.join(' · ');
+}
+
+function cashTillId(banks: BankAccount[]) {
+  const hit = banks.find((b) => {
+    const n = `${b.name} ${b.bank_name ?? ''} ${b.account_name ?? ''}`.toLowerCase();
+    return n.includes('cash in hand') || n.includes('cash on hand');
+  });
+  return hit?.id ?? '';
 }
 
 const emptyForm = {
@@ -176,8 +185,9 @@ export default function ExpensesPage() {
       setFormBaseline(emptyForm);
       notify.info('Draft restored');
     } else {
-      setForm(emptyForm);
-      setFormBaseline(emptyForm);
+      const next = { ...emptyForm, bank_account_id: cashTillId(banks) };
+      setForm(next);
+      setFormBaseline(next);
     }
     setError('');
     setShowModal(true);
@@ -204,7 +214,11 @@ export default function ExpensesPage() {
     const bal = Math.max(0, Number(e.amount) - Number(e.paid_amount || 0));
     setPaying(e);
     setEditingPayment(null);
-    const next = { ...emptyPayForm, amount: String(bal) };
+    const next = {
+      ...emptyPayForm,
+      amount: String(bal),
+      bank_account_id: cashTillId(banks),
+    };
     setPayForm(next);
     setPayBaseline(next);
     setError('');
@@ -701,29 +715,31 @@ export default function ExpensesPage() {
                     onChange={(e) => setForm((f) => ({
                       ...f,
                       payment_type: e.target.value,
-                      bank_account_id: needsBank(e.target.value) ? f.bank_account_id : '',
+                      bank_account_id: needsBank(e.target.value)
+                        ? f.bank_account_id
+                        : (f.bank_account_id || cashTillId(banks)),
                     }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
                   >
                     {DIRECT_PAYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
-                {needsBank(form.payment_type) && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Pay from bank *</label>
-                    <select
-                      value={form.bank_account_id}
-                      onChange={(e) => setForm((f) => ({ ...f, bank_account_id: e.target.value }))}
-                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-                    >
-                      <option value="">-- Select bank account --</option>
-                      {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(b)}</option>)}
-                    </select>
-                    {banks.length === 0 && (
-                      <p className="text-xs text-amber-600 mt-1">No banks yet — add one under Funds or Accounting → Bank Recon.</p>
-                    )}
-                  </div>
-                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Pay from (Cash & Bank){needsBank(form.payment_type) ? ' *' : ''}
+                  </label>
+                  <select
+                    value={form.bank_account_id}
+                    onChange={(e) => setForm((f) => ({ ...f, bank_account_id: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  >
+                    {!cashTillId(banks) && <option value="">Cash on hand (1000)</option>}
+                    {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(b)}</option>)}
+                  </select>
+                  {banks.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">No banks yet — add one under Funds or Accounting → Bank Recon.</p>
+                  )}
+                </div>
               </>
             )}
             <div>
@@ -799,11 +815,11 @@ export default function ExpensesPage() {
                 onChange={(e) => setPayForm((f) => ({ ...f, bank_account_id: e.target.value }))}
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               >
-                <option value="">Cash on hand (1000)</option>
+                {!cashTillId(banks) && <option value="">Cash on hand (1000)</option>}
                 {banks.map((b) => <option key={b.id} value={b.id}>{bankLabel(b)}</option>)}
               </select>
               <p className="text-[11px] text-slate-400 mt-1">
-                Choose the till or bank this payment leaves. Cash on hand posts to account 1000.
+                Choose Cash In Hand or a partner bank. Each option posts to its own account under Cash &amp; Bank.
               </p>
             </div>
             <div>

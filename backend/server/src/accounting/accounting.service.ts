@@ -48,6 +48,11 @@ export class AccountingService implements OnModuleInit {
     }
     await this.ensureBankCoaSubAccounts();
     await this.ensureCashBankHierarchy();
+    try {
+      await this.ensureCashBankTills();
+    } catch (err) {
+      console.error('ensureCashBankTills failed:', err);
+    }
   }
 
   /** Next free code in 1001–1099 for Cash & Bank children. */
@@ -218,6 +223,74 @@ export class AccountingService implements OnModuleInit {
     return null;
   }
 
+  private isCashTillName(name: string) {
+    return /cash\s*(in|on)\s*hand/i.test(name) || /^cash$/i.test((name || '').trim());
+  }
+
+  private async bumpBankAccountIdSequence(manager?: EntityManager) {
+    const ds = manager ?? this.dataSource;
+    await ds.query(`
+      SELECT setval(
+        pg_get_serial_sequence('bank_accounts', 'id'),
+        GREATEST(COALESCE((SELECT MAX(id) FROM bank_accounts), 1), 1)
+      )
+    `);
+  }
+
+  /** Pay-from / deposit-to lists use bank_accounts, not COA rows. */
+  private async ensureTillForCoaAccount(account: Account, manager?: EntityManager) {
+    const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
+    const linked = await bankRepo.findOne({ where: { account_id: account.id } });
+    if (linked) return linked;
+
+    const byName = await bankRepo
+      .createQueryBuilder('b')
+      .where('LOWER(b.name) = LOWER(:name)', { name: account.name })
+      .getOne();
+    if (byName) {
+      if (!byName.account_id) {
+        await bankRepo.update(byName.id, { account_id: account.id });
+        byName.account_id = account.id;
+      }
+      return byName;
+    }
+
+    await this.bumpBankAccountIdSequence(manager);
+    return bankRepo.save(
+      bankRepo.create({
+        name: account.name,
+        bank_name: this.isCashTillName(account.name) ? 'Cash' : null,
+        account_id: account.id,
+        opening_balance: '0',
+        is_active: account.is_active !== false,
+      }),
+    );
+  }
+
+  /**
+   * Cash In Hand is a COA child; Pay from lists bank_accounts.
+   * Create a till row for cash-in-hand only (partner banks already have rows).
+   */
+  private async ensureCashBankTills() {
+    const children = await this.accountsRepo.find();
+    for (const child of children) {
+      if (!this.isCashTillName(child.name)) continue;
+      await this.ensureTillForCoaAccount(child);
+    }
+  }
+
+  private async findCashInHandCoa(manager?: EntityManager): Promise<Account | null> {
+    const cash = await this.findAccountByCode('1000', manager);
+    if (!cash) return null;
+    const repo = manager ? manager.getRepository(Account) : this.accountsRepo;
+    const children = await repo
+      .createQueryBuilder('a')
+      .where('a.parent_account_id = :pid', { pid: cash.id })
+      .andWhere('a.is_active = true')
+      .getMany();
+    return children.find((a) => this.isCashTillName(a.name)) ?? null;
+  }
+
   findAccounts() {
     return this.accountsRepo.find({ order: { code: 'ASC' } });
   }
@@ -230,7 +303,7 @@ export class AccountingService implements OnModuleInit {
       code,
       dto.parent_account_id || null,
     );
-    return this.accountsRepo.save(
+    const saved = await this.accountsRepo.save(
       this.accountsRepo.create({
         ...dto,
         code,
@@ -238,6 +311,11 @@ export class AccountingService implements OnModuleInit {
         parent_account_id,
       }),
     );
+    const cash = await this.findAccountByCode('1000');
+    if (cash && saved.parent_account_id && String(saved.parent_account_id) === String(cash.id)) {
+      await this.ensureTillForCoaAccount(saved);
+    }
+    return saved;
   }
 
   async updateAccount(id: string, dto: Partial<Account>) {
@@ -259,7 +337,17 @@ export class AccountingService implements OnModuleInit {
       if (resolved && !acc.parent_account_id) patch.parent_account_id = resolved;
     }
     await this.accountsRepo.update(id, patch);
-    return this.accountsRepo.findOne({ where: { id } });
+    const updated = await this.accountsRepo.findOne({ where: { id } });
+    const cash = await this.findAccountByCode('1000');
+    if (
+      updated &&
+      cash &&
+      updated.parent_account_id &&
+      String(updated.parent_account_id) === String(cash.id)
+    ) {
+      await this.ensureTillForCoaAccount(updated);
+    }
+    return updated;
   }
 
   async findJournalEntries(project_id?: string) {
@@ -1156,7 +1244,10 @@ export class AccountingService implements OnModuleInit {
    */
   async resolveBankAssetAccountId(bankAccountId: string | null | undefined, manager?: EntityManager) {
     const cashDefault = await this.findAccountByCode('1000', manager);
-    if (!bankAccountId) return cashDefault.id;
+    if (!bankAccountId) {
+      const till = await this.findCashInHandCoa(manager);
+      return till?.id ?? cashDefault.id;
+    }
     const bankRepo = manager ? manager.getRepository(BankAccount) : this.bankRepo;
     const bank = await bankRepo.findOne({ where: { id: bankAccountId } });
     if (bank?.account_id && bank.account_id !== cashDefault.id) {
@@ -1543,8 +1634,19 @@ export class AccountingService implements OnModuleInit {
   }
 
   // ─── Bank accounts & reconciliation ─────────────────────────────────────
-  findBankAccounts() {
-    return this.bankRepo.find({ where: { is_active: true }, order: { name: 'ASC' } });
+  async findBankAccounts() {
+    await this.ensureCashBankTills();
+    const banks = await this.bankRepo.find({ where: { is_active: true }, order: { name: 'ASC' } });
+    const accounts = await this.accountsRepo.find();
+    const byId = new Map(accounts.map((a) => [String(a.id), a]));
+    return banks.map((b) => {
+      const acc = b.account_id ? byId.get(String(b.account_id)) : undefined;
+      return {
+        ...b,
+        account_code: acc?.code ?? null,
+        account_name: acc?.name ?? null,
+      };
+    });
   }
 
   async createBankAccount(dto: Partial<BankAccount>) {

@@ -103,6 +103,8 @@ export interface BankAccount {
   currency: string;
   opening_balance: string;
   is_active: boolean;
+  account_code?: string | null;
+  account_name?: string | null;
 }
 
 export interface BankStatementLine {
