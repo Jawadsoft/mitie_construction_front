@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   getAccounts,
   createAccount,
+  updateAccount,
   getJournalEntries,
   getJournalEntry,
   createJournalEntry,
@@ -74,6 +75,7 @@ export default function AccountingPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [showBankModal, setShowBankModal] = useState(false);
   const [showEditBankModal, setShowEditBankModal] = useState(false);
   const [showStmtModal, setShowStmtModal] = useState(false);
@@ -90,7 +92,13 @@ export default function AccountingPage() {
     { account_id: '', dr_cr: 'DEBIT', amount: '', narration: '' },
     { account_id: '', dr_cr: 'CREDIT', amount: '', narration: '' },
   ]);
-  const [accountForm, setAccountForm] = useState({ code: '', name: '', type: 'ASSET' });
+  const [accountForm, setAccountForm] = useState({
+    code: '',
+    name: '',
+    type: 'ASSET',
+    parent_account_id: '',
+    is_active: true,
+  });
   const [bankForm, setBankForm] = useState({ name: '', bank_name: '', account_number: '', opening_balance: '0', account_id: '' });
   const [editBankForm, setEditBankForm] = useState({
     name: '',
@@ -219,6 +227,63 @@ export default function AccountingPage() {
   const totalDebit = lines.filter((l) => l.dr_cr === 'DEBIT').reduce((s, l) => s + Number(l.amount || 0), 0);
   const totalCredit = lines.filter((l) => l.dr_cr === 'CREDIT').reduce((s, l) => s + Number(l.amount || 0), 0);
   const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01;
+
+  const emptyAccountForm = {
+    code: '',
+    name: '',
+    type: 'ASSET',
+    parent_account_id: '',
+    is_active: true,
+  };
+
+  const openNewAccount = () => {
+    setEditingAccountId(null);
+    setAccountForm(emptyAccountForm);
+    setError('');
+    setShowAccountModal(true);
+  };
+
+  const openEditAccount = (a: Account) => {
+    setEditingAccountId(a.id);
+    setAccountForm({
+      code: a.code,
+      name: a.name,
+      type: a.type,
+      parent_account_id: a.parent_account_id || '',
+      is_active: a.is_active !== false,
+    });
+    setError('');
+    setShowAccountModal(true);
+  };
+
+  const handleSaveAccount = async () => {
+    if (!accountForm.code.trim() || !accountForm.name.trim()) {
+      setError('Code and name are required');
+      return;
+    }
+    setError('');
+    try {
+      const dto = {
+        code: accountForm.code.trim(),
+        name: accountForm.name.trim(),
+        type: accountForm.type,
+        is_active: accountForm.is_active,
+        parent_account_id: accountForm.parent_account_id || null,
+      };
+      if (editingAccountId) {
+        await updateAccount(editingAccountId, dto);
+        notify.success('Account updated');
+      } else {
+        await createAccount(dto);
+        notify.success('Account created');
+      }
+      setShowAccountModal(false);
+      setEditingAccountId(null);
+      await load();
+    } catch (e: unknown) {
+      setError(notifyError(e, editingAccountId ? 'Failed to update account' : 'Failed to create account'));
+    }
+  };
 
   const handleSaveEntry = async () => {
     if (!isBalanced) { setError('Debits must equal credits'); return; }
@@ -530,7 +595,7 @@ export default function AccountingPage() {
             </div>
           )}
           {tab === 'accounts' && (
-            <button onClick={() => { setError(''); setShowAccountModal(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium">+ Account</button>
+            <button onClick={openNewAccount} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium">+ Account</button>
           )}
           {tab === 'bank-recon' && (
             <>
@@ -650,6 +715,7 @@ export default function AccountingPage() {
                 <th className="px-4 py-3 text-left text-gray-600">Name</th>
                 <th className="px-4 py-3 text-left text-gray-600">Type</th>
                 <th className="px-4 py-3 text-left text-gray-600">Active</th>
+                <th className="px-4 py-3 text-center text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -665,6 +731,11 @@ export default function AccountingPage() {
                     </td>
                     <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${ACCOUNT_TYPE_COLORS[a.type]}`}>{a.type}</span></td>
                     <td className="px-4 py-3">{a.is_active ? 'Yes' : 'No'}</td>
+                    <td className="px-4 py-3 text-center">
+                      <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => openEditAccount(a)}>
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1168,22 +1239,46 @@ export default function AccountingPage() {
       )}
 
       {showAccountModal && (
-        <Modal title="New Account" onClose={() => setShowAccountModal(false)}>
+        <Modal
+          title={editingAccountId ? 'Edit Account' : 'New Account'}
+          onClose={() => { setShowAccountModal(false); setEditingAccountId(null); }}
+        >
           <div className="space-y-3">
             <input placeholder="Code" value={accountForm.code} onChange={(e) => setAccountForm((f) => ({ ...f, code: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" />
             <input placeholder="Name" value={accountForm.name} onChange={(e) => setAccountForm((f) => ({ ...f, name: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm" />
             <select value={accountForm.type} onChange={(e) => setAccountForm((f) => ({ ...f, type: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm">
               {['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'].map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <button
-              onClick={async () => {
-                await createAccount({ ...accountForm, is_active: true });
-                setShowAccountModal(false);
-                load();
-              }}
-              className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm"
-            >
-              Create
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Parent head</label>
+              <select
+                value={accountForm.parent_account_id}
+                onChange={(e) => setAccountForm((f) => ({ ...f, parent_account_id: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">Top-level head (no parent)</option>
+                {accounts
+                  .filter((a) => !a.parent_account_id && a.id !== editingAccountId)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>{a.code} {a.name}</option>
+                  ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cash, banks, and cash in hand should sit under 1000 Cash &amp; Bank.
+              </p>
+            </div>
+            {editingAccountId && (
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={accountForm.is_active}
+                  onChange={(e) => setAccountForm((f) => ({ ...f, is_active: e.target.checked }))}
+                />
+                Active
+              </label>
+            )}
+            <button onClick={handleSaveAccount} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm">
+              {editingAccountId ? 'Save changes' : 'Create'}
             </button>
           </div>
         </Modal>

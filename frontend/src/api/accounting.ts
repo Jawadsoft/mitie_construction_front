@@ -142,7 +142,7 @@ export async function createAccount(dto: Partial<Account>): Promise<Account> {
     method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
   });
-  if (!res.ok) throw new Error('Failed to create account');
+  if (!res.ok) throw new Error(await readApiError(res, 'Failed to create account'));
   return res.json();
 }
 
@@ -151,7 +151,7 @@ export async function updateAccount(id: string, dto: Partial<Account>): Promise<
     method: 'PATCH', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
   });
-  if (!res.ok) throw new Error('Failed to update account');
+  if (!res.ok) throw new Error(await readApiError(res, 'Failed to update account'));
   return res.json();
 }
 

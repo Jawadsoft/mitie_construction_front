@@ -62,6 +62,25 @@ const emptyInstallRow = () => ({
   paid_amount: '0',
   locked: false,
 });
+type InstallFormRow = ReturnType<typeof emptyInstallRow>;
+
+function scheduledInstallTotal(rows: Array<{ due_amount: string }>) {
+  return rows.reduce((sum, row) => sum + (Number(row.due_amount) || 0), 0);
+}
+
+/** Ensure outstanding sale price has a receivable row so a due date can be set. */
+function withUnscheduledReceivable(rows: InstallFormRow[], salePrice: number): InstallFormRow[] {
+  const next = rows.length > 0 ? rows.map((r) => ({ ...r })) : [emptyInstallRow()];
+  const remainder = Math.round((salePrice - scheduledInstallTotal(next)) * 100) / 100;
+  if (remainder <= 0.009) return next;
+  const filler = next.find((r) => !r.id && !r.due_date && !Number(r.due_amount));
+  if (filler) {
+    filler.due_amount = remainder.toFixed(2);
+    return next;
+  }
+  next.push({ ...emptyInstallRow(), due_amount: remainder.toFixed(2) });
+  return next;
+}
 const emptyCustForm = { name: '', phone: '', email: '', cnic: '', address: '' };
 
 function bankLabel(b: BankAccount) {
@@ -339,6 +358,10 @@ export default function SalesPage({
   };
   const todayStr = new Date().toISOString().split('T')[0];
   const isInstallmentOverdue = (due: string) => due < todayStr;
+  const unscheduledReceivable =
+    Math.round(
+      ((Number(saleForm.total_sale_price) || 0) - scheduledInstallTotal(installForms)) * 100,
+    ) / 100;
 
   const handleExportCollections = () => {
     exportCSV(
@@ -388,6 +411,10 @@ export default function SalesPage({
       setError(
         `Sale price cannot be less than already collected (PKR ${Number(editingSale?.total_paid ?? 0).toLocaleString()})`,
       );
+      throw new Error('validation');
+    }
+    if (installForms.some((i) => Number(i.due_amount) > 0.009 && !i.due_date)) {
+      setError('Set a due date for each receivable installment');
       throw new Error('validation');
     }
     setError('');
@@ -443,7 +470,7 @@ export default function SalesPage({
         notes: full.notes ?? '',
         status: full.status,
       };
-      const installs =
+      const mapped =
         (full.installments ?? []).length > 0
           ? (full.installments ?? []).map((i) => ({
               id: i.id,
@@ -453,10 +480,11 @@ export default function SalesPage({
               locked: Number(i.paid_amount) > 0.009,
             }))
           : [emptyInstallRow()];
+      const installs = withUnscheduledReceivable(mapped, Number(full.total_sale_price));
       setSaleForm(next as any);
       setSaleBaseline(next as any);
-      setInstallForms(installs as any);
-      setInstallBaseline(installs as any);
+      setInstallForms(installs);
+      setInstallBaseline(installs);
       setShowModal('sale');
     } catch (e: any) {
       setError(notifyError(e));
@@ -1664,9 +1692,9 @@ export default function SalesPage({
               />
             </div>
             <div>
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-1">
                 <label className="text-sm font-medium text-gray-700">
-                  {editingSale ? 'Installment schedule' : 'Installments (optional)'}
+                  {editingSale ? 'Receivable due dates' : 'Installments (optional)'}
                 </label>
                 <button
                   type="button"
@@ -1676,12 +1704,20 @@ export default function SalesPage({
                   + Add
                 </button>
               </div>
+              <p className="text-xs text-slate-500 mb-2">
+                Set when each outstanding receivable is due. Cashflow and aging use these dates.
+              </p>
+              <div className="grid grid-cols-[1fr_1fr_1.5rem] gap-2 text-[10px] font-medium text-slate-500 mb-1 px-0.5">
+                <span>Due Date</span>
+                <span>Amount</span>
+                <span />
+              </div>
               <div className="space-y-2">
                 {installForms.map((inst, idx) => (
-                  <div key={inst.id || idx} className="grid grid-cols-2 gap-2">
+                  <div key={inst.id || idx} className="grid grid-cols-[1fr_1fr_1.5rem] gap-2 items-start">
                     <input
                       type="date"
-                      placeholder="Due Date"
+                      aria-label="Due date"
                       value={inst.due_date}
                       onChange={(e) => setInstallForms((prev) => {
                         const n = [...prev];
@@ -1692,6 +1728,7 @@ export default function SalesPage({
                     />
                     <input
                       type="number"
+                      aria-label="Due amount"
                       placeholder="Amount"
                       value={inst.due_amount}
                       disabled={!!inst.locked}
@@ -1703,14 +1740,51 @@ export default function SalesPage({
                       })}
                       className={`border rounded px-2 py-1 text-xs ${inst.locked ? 'bg-gray-50 text-gray-500' : ''}`}
                     />
+                    {inst.locked ? (
+                      <span className="w-6" />
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label="Remove installment"
+                        onClick={() => setInstallForms((prev) =>
+                          prev.length <= 1 ? [emptyInstallRow()] : prev.filter((_, i) => i !== idx),
+                        )}
+                        className="text-slate-400 hover:text-red-600 text-sm leading-none pt-1"
+                      >
+                        ×
+                      </button>
+                    )}
                     {inst.locked && (
-                      <p className="col-span-2 text-[10px] text-slate-500">
+                      <p className="col-span-3 text-[10px] text-slate-500 -mt-1">
                         Paid PKR {Number(inst.paid_amount || 0).toLocaleString()} — due date can still be adjusted
+                      </p>
+                    )}
+                    {!inst.locked && Number(inst.due_amount) > 0.009 && !inst.due_date && (
+                      <p className="col-span-3 text-[10px] text-amber-700 -mt-1">
+                        Set a due date for this receivable
                       </p>
                     )}
                   </div>
                 ))}
               </div>
+              {unscheduledReceivable > 0.009 && (
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="text-xs text-amber-700">
+                    Unscheduled receivable: PKR {unscheduledReceivable.toLocaleString()}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setInstallForms((prev) =>
+                        withUnscheduledReceivable(prev, Number(saleForm.total_sale_price) || 0),
+                      )
+                    }
+                    className="text-blue-600 text-xs hover:underline shrink-0"
+                  >
+                    Add due date
+                  </button>
+                </div>
+              )}
             </div>
             <button type="button" onClick={handleSaveSale} className="hidden" />
           </div>

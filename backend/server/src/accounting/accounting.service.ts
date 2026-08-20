@@ -47,6 +47,7 @@ export class AccountingService implements OnModuleInit {
       }
     }
     await this.ensureBankCoaSubAccounts();
+    await this.ensureCashBankHierarchy();
   }
 
   /** Next free code in 1001–1099 for Cash & Bank children. */
@@ -186,18 +187,78 @@ export class AccountingService implements OnModuleInit {
     }
   }
 
+  /**
+   * Codes 1001–1099 belong under 1000 Cash & Bank.
+   * Fixes accounts like "Cash In Hand" that were created as a top-level head.
+   */
+  private async ensureCashBankHierarchy() {
+    const cash = await this.findAccountByCode('1000');
+    if (!cash) return;
+    await this.accountsRepo
+      .createQueryBuilder()
+      .update(Account)
+      .set({ parent_account_id: cash.id })
+      .where(`code LIKE :pfx`, { pfx: '10%' })
+      .andWhere(`LENGTH(code) = 4`)
+      .andWhere(`code <> '1000'`)
+      .andWhere(`parent_account_id IS NULL`)
+      .execute();
+  }
+
+  private async resolveCashBankParentId(
+    code: string | undefined,
+    parentAccountId: string | null | undefined,
+  ): Promise<string | null> {
+    if (parentAccountId) return String(parentAccountId);
+    const trimmed = (code || '').trim();
+    if (/^10\d{2}$/.test(trimmed) && trimmed !== '1000') {
+      const cash = await this.findAccountByCode('1000');
+      return cash?.id ?? null;
+    }
+    return null;
+  }
+
   findAccounts() {
     return this.accountsRepo.find({ order: { code: 'ASC' } });
   }
 
-  createAccount(dto: Partial<Account>) {
-    return this.accountsRepo.save(this.accountsRepo.create(dto));
+  async createAccount(dto: Partial<Account>) {
+    const code = (dto.code || '').trim();
+    const name = (dto.name || '').trim();
+    if (!code || !name) throw new BadRequestException('Code and name are required');
+    const parent_account_id = await this.resolveCashBankParentId(
+      code,
+      dto.parent_account_id || null,
+    );
+    return this.accountsRepo.save(
+      this.accountsRepo.create({
+        ...dto,
+        code,
+        name,
+        parent_account_id,
+      }),
+    );
   }
 
   async updateAccount(id: string, dto: Partial<Account>) {
     const acc = await this.accountsRepo.findOne({ where: { id } });
     if (!acc) throw new NotFoundException('Account not found');
-    await this.accountsRepo.update(id, dto);
+    const patch: Partial<Account> = {};
+    if (dto.code !== undefined) patch.code = String(dto.code).trim();
+    if (dto.name !== undefined) patch.name = String(dto.name).trim();
+    if (dto.type !== undefined) patch.type = dto.type;
+    if (dto.is_active !== undefined) patch.is_active = dto.is_active;
+    if (dto.parent_account_id !== undefined) {
+      const pid = dto.parent_account_id ? String(dto.parent_account_id) : null;
+      if (pid === String(id)) {
+        throw new BadRequestException('Account cannot be its own parent');
+      }
+      patch.parent_account_id = pid;
+    } else if (patch.code) {
+      const resolved = await this.resolveCashBankParentId(patch.code, acc.parent_account_id);
+      if (resolved && !acc.parent_account_id) patch.parent_account_id = resolved;
+    }
+    await this.accountsRepo.update(id, patch);
     return this.accountsRepo.findOne({ where: { id } });
   }
 
