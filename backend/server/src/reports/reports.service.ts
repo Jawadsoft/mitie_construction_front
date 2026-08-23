@@ -812,9 +812,14 @@ export class ReportsService {
       (s: number, r: { invested: number }) => s + r.invested,
       0,
     );
+    // Available cash = actual closing + receivables due − payables due + locked (paid in active projects)
     const expected_net =
-      expectedReceivables - expectedPayables - locked_in_projects_total;
-    const expected_closing_cash = actualClosingCash + expected_net;
+      expectedReceivables - expectedPayables + locked_in_projects_total;
+    const expected_closing_cash =
+      actualClosingCash +
+      expectedReceivables -
+      expectedPayables +
+      locked_in_projects_total;
 
     return {
       scope: {

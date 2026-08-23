@@ -753,7 +753,7 @@ export default function ReportsPage({
               </div>
 
               <div className="bg-slate-50 border rounded-xl px-4 py-3 text-sm text-slate-600">
-                Expected Closing = Actual Closing + Due Receivables − Due Payables
+                Expected Closing = Actual Closing + Due Receivables − Due Payables + Locked in projects
                 <span className={`ml-2 font-mono font-bold ${
                   cashflowData.summary.expected_net >= 0 ? 'text-green-700' : 'text-red-700'
                 }`}>

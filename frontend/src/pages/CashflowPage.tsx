@@ -135,6 +135,17 @@ export default function CashflowPage() {
 
   useEffect(() => { load(); }, [filterType, filterProject, dateFrom, dateTo]);
 
+  const lockedInProjects = statement?.summary.locked_in_projects || 0;
+  const expectedNet = statement
+    ? statement.summary.due_receivables - statement.summary.due_payables + lockedInProjects
+    : 0;
+  const expectedClosing = statement
+    ? statement.summary.actual_closing_cash +
+      statement.summary.due_receivables -
+      statement.summary.due_payables +
+      lockedInProjects
+    : 0;
+
   return (
     <div className="space-y-4">
       <div>
@@ -236,13 +247,13 @@ export default function CashflowPage() {
             />
             <StatCard
               title="Expected Closing"
-              value={formatPkrThousands(statement.summary.expected_closing_cash)}
+              value={formatPkrThousands(expectedClosing)}
               icon="📊"
-              color={statement.summary.expected_closing_cash >= 0 ? 'green' : 'red'}
+              color={expectedClosing >= 0 ? 'green' : 'red'}
             />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-1 items-start">
+          <div className="grid gap-4 lg:grid-cols-1 items-start mx-4 md:mx-8 lg:mx-16">
             <div className="bg-white rounded-xl border p-5">
               <h2 className="font-bold text-slate-800">Statement of Cash Flows (Direct Method)</h2>
               <p className="text-xs text-slate-500 mt-0.5 mb-4">
@@ -301,7 +312,7 @@ export default function CashflowPage() {
             <div className="bg-white rounded-xl border p-5">
               <h2 className="font-bold text-slate-800">Expected Cash Position</h2>
               <p className="text-xs text-slate-500 mt-0.5 mb-4">
-                Actual closing adjusted for dues and cash locked in active projects with no sales yet.
+                Actual closing + receivables − payables + locked project spend (paid only).
               </p>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between border-b py-2">
@@ -318,22 +329,22 @@ export default function CashflowPage() {
                 </div>
                 <div className="flex justify-between border-b py-2 text-amber-700">
                   <span>Locked in projects (paid only)</span>
-                  <span className="font-mono">−{formatPkrThousands(statement.summary.locked_in_projects || 0)}</span>
+                  <span className="font-mono">+{formatPkrThousands(lockedInProjects)}</span>
                 </div>
                 <div className="flex justify-between border-b py-2 font-semibold">
                   <span>Expected net movement</span>
-                  <span className={`font-mono ${statement.summary.expected_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    {statement.summary.expected_net >= 0 ? '+' : ''}
-                    {formatPkrThousands(statement.summary.expected_net)}
+                  <span className={`font-mono ${expectedNet >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    {expectedNet >= 0 ? '+' : ''}
+                    {formatPkrThousands(expectedNet)}
                   </span>
                 </div>
                 <div className={`flex justify-between rounded-lg px-3 py-3 font-bold ${
-                  statement.summary.expected_closing_cash >= 0
+                  expectedClosing >= 0
                     ? 'bg-green-50 text-green-800'
                     : 'bg-red-50 text-red-800'
                 }`}>
                   <span>Available / expected cash</span>
-                  <span className="font-mono">{formatPkrThousands(statement.summary.expected_closing_cash)}</span>
+                  <span className="font-mono">{formatPkrThousands(expectedClosing)}</span>
                 </div>
               </div>
             </div>
