@@ -770,6 +770,53 @@ export class ReportsService {
     const expectedReceivables = dueReceivables.reduce((sum, r) => sum + r.amount, 0);
     const expectedPayables = duePayables.reduce((sum, r) => sum + r.amount, 0);
 
+    // Cash locked in active / in-progress projects that have not started sales yet
+    const lockedParams: string[] = [];
+    const lockedWhere = [
+      `p.deleted_at IS NULL`,
+      `p.status IN ('Planning', 'Active', 'On Hold')`,
+      `NOT EXISTS (
+         SELECT 1 FROM sales s
+         JOIN property_units pu ON pu.id = s.property_unit_id
+         WHERE pu.project_id = p.id AND s.status != 'Cancelled'
+       )`,
+    ];
+    if (project_id) {
+      lockedParams.push(project_id);
+      lockedWhere.push(`p.id = $${lockedParams.length}`);
+    }
+    const lockedProjectRows = await this.q(
+      `
+      SELECT
+        p.id::text AS project_id,
+        p.name AS project_name,
+        p.status,
+        COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
+          + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
+          AS invested
+      FROM projects p
+      WHERE ${lockedWhere.join(' AND ')}
+      ORDER BY p.name ASC
+      `,
+      lockedParams,
+    );
+    const locked_in_projects = lockedProjectRows
+      .map((r: any) => ({
+        project_id: r.project_id,
+        project_name: r.project_name,
+        status: r.status,
+        invested: Number(r.invested),
+      }))
+      .filter((r: { invested: number }) => r.invested > 0.009);
+    const locked_in_projects_total = locked_in_projects.reduce(
+      (s: number, r: { invested: number }) => s + r.invested,
+      0,
+    );
+    const expected_net =
+      expectedReceivables - expectedPayables - locked_in_projects_total;
+    const expected_closing_cash = actualClosingCash + expected_net;
+
     return {
       scope: {
         project_id: project_id ?? null,
@@ -785,9 +832,9 @@ export class ReportsService {
         actual_closing_cash: actualClosingCash,
         due_receivables: expectedReceivables,
         due_payables: expectedPayables,
-        expected_net: expectedReceivables - expectedPayables,
-        expected_closing_cash:
-          actualClosingCash + expectedReceivables - expectedPayables,
+        locked_in_projects: Math.round(locked_in_projects_total * 100) / 100,
+        expected_net: Math.round(expected_net * 100) / 100,
+        expected_closing_cash: Math.round(expected_closing_cash * 100) / 100,
         operating_net: activities.operating.net,
         investing_net: activities.investing.net,
         financing_net: activities.financing.net,
@@ -796,6 +843,7 @@ export class ReportsService {
       rows: actualRows,
       due_receivables: dueReceivables,
       due_payables: duePayables,
+      locked_in_projects,
     };
   }
 

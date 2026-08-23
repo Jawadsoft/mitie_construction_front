@@ -301,7 +301,7 @@ export default function CashflowPage() {
             <div className="bg-white rounded-xl border p-5">
               <h2 className="font-bold text-slate-800">Expected Cash Position</h2>
               <p className="text-xs text-slate-500 mt-0.5 mb-4">
-                Outstanding receivables and payables whose due dates fall in the selected period.
+                Actual closing adjusted for dues and cash locked in active projects with no sales yet.
               </p>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between border-b py-2">
@@ -316,6 +316,10 @@ export default function CashflowPage() {
                   <span>Payables due</span>
                   <span className="font-mono">−{formatPkrThousands(statement.summary.due_payables)}</span>
                 </div>
+                <div className="flex justify-between border-b py-2 text-amber-700">
+                  <span>Locked in active projects (no sales)</span>
+                  <span className="font-mono">−{formatPkrThousands(statement.summary.locked_in_projects || 0)}</span>
+                </div>
                 <div className="flex justify-between border-b py-2 font-semibold">
                   <span>Expected net movement</span>
                   <span className={`font-mono ${statement.summary.expected_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
@@ -328,14 +332,14 @@ export default function CashflowPage() {
                     ? 'bg-green-50 text-green-800'
                     : 'bg-red-50 text-red-800'
                 }`}>
-                  <span>Expected closing cash</span>
+                  <span>Available / expected cash</span>
                   <span className="font-mono">{formatPkrThousands(statement.summary.expected_closing_cash)}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-3">
             <div className="bg-white rounded-xl border overflow-hidden">
               <div className="px-4 py-3 bg-green-50 border-b">
                 <h2 className="font-semibold text-green-800">Receivables Due</h2>
@@ -390,6 +394,35 @@ export default function CashflowPage() {
                         </td>
                         <td className="px-3 py-2 text-right font-mono font-semibold text-red-700">
                           {formatPkrThousands(r.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <div className="px-4 py-3 bg-amber-50 border-b">
+                <h2 className="font-semibold text-amber-800">Locked in Active Projects</h2>
+                <p className="text-xs text-amber-700/80">Planning / Active / On Hold with no sales yet</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50"><tr>
+                    <th className="px-3 py-2 text-left text-gray-600">Project</th>
+                    <th className="px-3 py-2 text-left text-gray-600">Status</th>
+                    <th className="px-3 py-2 text-right text-gray-600">Invested</th>
+                  </tr></thead>
+                  <tbody>
+                    {!(statement.locked_in_projects?.length) ? (
+                      <tr><td colSpan={3} className="text-center text-gray-400 py-8">No locked project investment.</td></tr>
+                    ) : statement.locked_in_projects.map((r) => (
+                      <tr key={r.project_id} className="border-t">
+                        <td className="px-3 py-2 font-medium">{r.project_name}</td>
+                        <td className="px-3 py-2 text-slate-500">{r.status}</td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700">
+                          {formatPkrThousands(r.invested)}
                         </td>
                       </tr>
                     ))}

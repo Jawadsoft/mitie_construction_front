@@ -120,6 +120,13 @@ export interface CashflowDuePayable {
   amount: number;
 }
 
+export interface CashflowLockedProject {
+  project_id: string;
+  project_name: string;
+  status: string;
+  invested: number;
+}
+
 export interface CashflowActivityLine {
   account_code: string;
   account_name: string;
@@ -151,6 +158,7 @@ export interface CashflowReport {
     actual_closing_cash: number;
     due_receivables: number;
     due_payables: number;
+    locked_in_projects: number;
     expected_net: number;
     expected_closing_cash: number;
     operating_net: number;
@@ -165,6 +173,7 @@ export interface CashflowReport {
   rows: CashflowRow[];
   due_receivables: CashflowDueReceivable[];
   due_payables: CashflowDuePayable[];
+  locked_in_projects: CashflowLockedProject[];
 }
 
 export interface ExpenseBreakdown {
