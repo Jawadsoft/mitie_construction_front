@@ -251,6 +251,13 @@ export default function CashflowPage() {
                 {statement.scope.to ? ` to ${formatDate(statement.scope.to)}` : ''}.
               </p>
 
+              <div className="mb-5 flex justify-between border-b-2 border-slate-300 py-2 text-sm font-semibold">
+                <span>Opening cash</span>
+                <span className="font-mono" title={formatPkrFull(statement.summary.opening_cash)}>
+                  {signed(statement.summary.opening_cash)}
+                </span>
+              </div>
+
               <ActivitySection
                 title="Cash Flows from Operating Activities"
                 subtitle="Sales collections, project costs, expenses and working capital"
@@ -277,14 +284,8 @@ export default function CashflowPage() {
                     {signed(statement.summary.actual_net)}
                   </span>
                 </div>
-                <div className="flex justify-between border-b py-2">
-                  <span>Cash and bank at beginning of period</span>
-                  <span className="font-mono" title={formatPkrFull(statement.summary.opening_cash)}>
-                    {signed(statement.summary.opening_cash)}
-                  </span>
-                </div>
                 <div className="flex justify-between rounded-lg bg-blue-50 px-3 py-3 font-bold text-blue-800">
-                  <span>Cash and bank at end of period</span>
+                  <span>Closing cash</span>
                   <span className="font-mono" title={formatPkrFull(statement.summary.actual_closing_cash)}>
                     {signed(statement.summary.actual_closing_cash)}
                   </span>
