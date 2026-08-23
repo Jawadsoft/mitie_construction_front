@@ -791,9 +791,8 @@ export class ReportsService {
         p.id::text AS project_id,
         p.name AS project_name,
         p.status,
-        COALESCE((SELECT SUM(CAST(e.amount AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
+        COALESCE((SELECT SUM(CAST(COALESCE(e.paid_amount, 0) AS NUMERIC)) FROM expenses e WHERE e.project_id = p.id), 0)
           + COALESCE((SELECT SUM(CAST(lp.amount AS NUMERIC)) FROM labour_payments lp WHERE lp.project_id = p.id), 0)
-          + COALESCE((SELECT SUM(CAST(mi.total_cost AS NUMERIC)) FROM material_issues mi WHERE mi.project_id = p.id), 0)
           AS invested
       FROM projects p
       WHERE ${lockedWhere.join(' AND ')}

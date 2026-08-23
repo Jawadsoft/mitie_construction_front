@@ -242,7 +242,7 @@ export default function CashflowPage() {
             />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2 items-start">
+          <div className="grid gap-4 lg:grid-cols-1 items-start">
             <div className="bg-white rounded-xl border p-5">
               <h2 className="font-bold text-slate-800">Statement of Cash Flows (Direct Method)</h2>
               <p className="text-xs text-slate-500 mt-0.5 mb-4">
@@ -317,7 +317,7 @@ export default function CashflowPage() {
                   <span className="font-mono">−{formatPkrThousands(statement.summary.due_payables)}</span>
                 </div>
                 <div className="flex justify-between border-b py-2 text-amber-700">
-                  <span>Locked in active projects (no sales)</span>
+                  <span>Locked in projects (paid only)</span>
                   <span className="font-mono">−{formatPkrThousands(statement.summary.locked_in_projects || 0)}</span>
                 </div>
                 <div className="flex justify-between border-b py-2 font-semibold">
@@ -405,14 +405,14 @@ export default function CashflowPage() {
             <div className="bg-white rounded-xl border overflow-hidden">
               <div className="px-4 py-3 bg-amber-50 border-b">
                 <h2 className="font-semibold text-amber-800">Locked in Active Projects</h2>
-                <p className="text-xs text-amber-700/80">Planning / Active / On Hold with no sales yet</p>
+                <p className="text-xs text-amber-700/80">Paid totals only · Planning / Active / On Hold · no sales yet</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50"><tr>
                     <th className="px-3 py-2 text-left text-gray-600">Project</th>
                     <th className="px-3 py-2 text-left text-gray-600">Status</th>
-                    <th className="px-3 py-2 text-right text-gray-600">Invested</th>
+                    <th className="px-3 py-2 text-right text-gray-600">Paid</th>
                   </tr></thead>
                   <tbody>
                     {!(statement.locked_in_projects?.length) ? (
